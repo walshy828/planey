@@ -1,0 +1,309 @@
+import logging
+import asyncio
+from datetime import datetime, timezone, timedelta
+from typing import Optional
+
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+
+from app.models import Flight, Aircraft
+from app.services.flightradar import fr24_client
+from app.services.home_assistant import ha_service
+from app.services.geocoder import geocoder
+
+logger = logging.getLogger(__name__)
+
+class ReconciliationService:
+    """Service to automatically close out 'stuck' flights."""
+    
+    async def reconcile_flight(self, flight_id: str, db: AsyncSession) -> dict:
+        """
+        Manually reconcile a single flight.
+        Finds the flight's actual completed details via FR24.
+        """
+        # 1. Fetch flight
+        result = await db.execute(
+            select(Flight)
+            .where(Flight.id == flight_id)
+        )
+        flight = result.scalars().first()
+        
+        if not flight:
+            raise ValueError(f"Flight {flight_id} not found")
+            
+        if flight.status not in ["active", "scheduled"]:
+            return {"status": "skipped", "message": f"Flight {flight.id} is already {flight.status}"}
+
+        # 2. Fetch Aircraft
+        result_ac = await db.execute(
+            select(Aircraft).where(Aircraft.id == flight.aircraft_id)
+        )
+        aircraft = result_ac.scalars().first()
+
+        if not aircraft:
+            raise ValueError(f"Aircraft for flight {flight_id} not found")
+
+        # 3. Lookup Flight History
+        logger.info(f"Reconciling flight {flight.flight_number or flight.callsign} for {aircraft.tail_number}")
+        
+        # We will use the lookup_flight method which handles both FR24 and FA fallbacks
+        fa_data = await fr24_client.lookup_flight(
+            flight_number=flight.flight_number, 
+            registration=aircraft.tail_number, 
+            callsign=flight.callsign
+        )
+        
+        # If FR24 failed or thinks it's still active, try the FlightAware direct JSON extraction fallback
+        if not fa_data or fa_data.get("status") not in ["landed", "arrived", "arrived / delayed", "cancelled"]:
+            logger.info("FR24 did not resolve flight to landed state. Falling back to direct FlightAware extraction.")
+            
+            import httpx
+            import json
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+            
+            try:
+                async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=10.0) as client:
+                    resp = await client.get(f"https://www.flightaware.com/live/flight/{aircraft.tail_number}")
+                    start_str = "var trackpollBootstrap = "
+                    if start_str in resp.text:
+                        idx = resp.text.find(start_str) + len(start_str)
+                        open_braces = 0
+                        json_str = ""
+                        for i, char in enumerate(resp.text[idx:]):
+                            if char == "{":
+                                open_braces += 1
+                            elif char == "}":
+                                open_braces -= 1
+                                if open_braces == 0:
+                                    json_str = resp.text[idx:idx+i+1]
+                                    break
+                        
+                        if json_str:
+                            data = json.loads(json_str)
+                            flights_map = data.get("flights", {})
+                            
+                            # Find the first 'arrived' or 'landed' flight in the activity log
+                            found_fa_flight = None
+                            for k, v in flights_map.items():
+                                act_flights = v.get("activityLog", {}).get("flights", [])
+                                for f in act_flights:
+                                    status = f.get("flightStatus", "").lower()
+                                    if status in ["arrived", "landed"]:
+                                        found_fa_flight = f
+                                        break
+                                if found_fa_flight: break
+                                
+                            if found_fa_flight:
+                                logger.info(f"Found match in FA JSON with status {found_fa_flight.get('flightStatus')}")
+                                if not fa_data: fa_data = {}
+                                fa_data["status"] = "landed"
+                                dest = found_fa_flight.get("destination", {})
+                                fa_data["arrival_iata"] = dest.get("iata") or dest.get("friendlyName")
+                                fa_data["arrival_name"] = dest.get("friendlyLocation") or fa_data.get("arrival_name")
+                                
+                                arr_time = found_fa_flight.get("landingTimes", {}).get("actual") or found_fa_flight.get("landingTimes", {}).get("estimated")
+                                if arr_time:
+                                    fa_data["actual_arrival"] = datetime.fromtimestamp(arr_time, tz=timezone.utc)
+                                    
+                                dep_time = found_fa_flight.get("takeoffTimes", {}).get("actual") or found_fa_flight.get("takeoffTimes", {}).get("estimated")
+                                if dep_time:
+                                    fa_data["actual_departure"] = datetime.fromtimestamp(dep_time, tz=timezone.utc)
+                                    
+                                # Extract coordinates to create a grounded position
+                                coord = dest.get("coord")
+                                if coord and len(coord) == 2:
+                                    fa_data["dest_lon"] = coord[0]
+                                    fa_data["dest_lat"] = coord[1]
+            except Exception as e:
+                logger.error(f"FlightAware JSON extraction failed: {e}")
+
+        if not fa_data:
+            return {"status": "failed", "message": "Could not find historical data in FR24/FA"}
+            
+        # 4. Update the Flight
+        updated = False
+        
+        if fa_data.get("status") in ["landed", "arrived", "arrived / delayed"]:
+            flight.status = "landed"
+            
+            # Update arrival info if it changed
+            if fa_data.get("arrival_iata") and not flight.arrival_iata:
+                flight.arrival_iata = fa_data["arrival_iata"]
+            if fa_data.get("arrival_name") and not flight.arrival_name:
+                flight.arrival_name = fa_data["arrival_name"]
+                
+            # Update times
+            if fa_data.get("scheduled_arrival"):
+                flight.scheduled_arrival = self._ensure_tz(fa_data["scheduled_arrival"])
+            if fa_data.get("actual_arrival"):
+                flight.actual_arrival = self._ensure_tz(fa_data["actual_arrival"])
+            elif fa_data.get("scheduled_arrival"):
+                flight.actual_arrival = self._ensure_tz(fa_data["scheduled_arrival"])
+                
+            if fa_data.get("actual_departure"):
+                flight.actual_departure = self._ensure_tz(fa_data["actual_departure"])
+                
+            updated = True
+            
+            # Create a grounded position so the UI doesn't show it stuck mid-air
+            dest_lat = fa_data.get("dest_lat")
+            dest_lon = fa_data.get("dest_lon")
+            if dest_lat and dest_lon:
+                from app.models import Position
+                new_pos = Position(
+                    aircraft_id=aircraft.id,
+                    flight_id=flight.id,
+                    latitude=dest_lat,
+                    longitude=dest_lon,
+                    altitude_ft=0,
+                    ground_speed_kts=0,
+                    heading=0,
+                    vertical_rate_fpm=0,
+                    on_ground=True,
+                    source="reconciliation",
+                    timestamp=flight.actual_arrival or datetime.now(timezone.utc),
+                    location_name=flight.arrival_name or flight.arrival_iata
+                )
+                db.add(new_pos)
+            
+        elif fa_data.get("status", "").lower() == "cancelled":
+            flight.status = "cancelled"
+            updated = True
+        elif fa_data.get("status", "").lower() in ["active", "en route", "scheduled"]:
+            # Maybe the external source still thinks it's active. 
+            # We won't forcefully close it if it's genuinely active.
+            return {"status": "skipped", "message": f"External source says status is {fa_data.get('status')}"}
+
+        if updated:
+            # 6. Notify Home Assistant
+            await self._notify_ha(aircraft, flight)
+            
+            await db.commit()
+            return {"status": "success", "message": "Flight reconciled and closed"}
+            
+        return {"status": "skipped", "message": "No actionable updates found"}
+
+    def _ensure_tz(self, dt):
+        """Ensure a datetime object is timezone-aware (UTC)."""
+        if isinstance(dt, str):
+            try:
+                from dateutil import parser
+                dt = parser.parse(dt)
+            except:
+                return None
+        if not dt:
+            return None
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt
+
+    async def _notify_ha(self, aircraft: Aircraft, flight: Flight):
+        """Send a 'Landed' state to Home Assistant."""
+        # Get location string
+        loc = flight.arrival_iata or flight.departure_iata or "Unknown Airport"
+        status_str = ha_service.build_status_string(
+            on_ground=True, # force on ground
+            departure_iata=flight.departure_iata,
+            arrival_iata=flight.arrival_iata,
+            scheduled_arrival=flight.scheduled_arrival.isoformat() if flight.scheduled_arrival else None,
+            scheduled_departure=flight.scheduled_departure.isoformat() if flight.scheduled_departure else None,
+            flight_status=flight.status,
+            location_name=None
+        )
+        
+        flight_data = {
+            "flight_number": flight.flight_number,
+            "callsign": flight.callsign,
+            "departure_iata": flight.departure_iata,
+            "departure_name": flight.departure_name,
+            "arrival_iata": flight.arrival_iata,
+            "arrival_name": flight.arrival_name,
+            "scheduled_departure": flight.scheduled_departure.isoformat() if flight.scheduled_departure else None,
+            "scheduled_arrival": flight.scheduled_arrival.isoformat() if flight.scheduled_arrival else None,
+            "actual_departure": flight.actual_departure.isoformat() if flight.actual_departure else None,
+            "actual_arrival": flight.actual_arrival.isoformat() if flight.actual_arrival else None,
+            "aircraft_type": aircraft.aircraft_type,
+            "airline": aircraft.airline,
+            "status": flight.status,
+        }
+        
+        await ha_service.update_aircraft_sensor(
+            tail_number=aircraft.tail_number,
+            status=status_str,
+            flight_data=flight_data,
+            position_data={"on_ground": True}
+        )
+
+    async def run_reconciliation_job(self):
+        """Background job to reconcile stuck flights."""
+        from app.database import async_session
+        from app.models import Setting
+        
+        async with async_session() as session:
+            # 1. Get Settings
+            res = await session.execute(select(Setting).where(Setting.key == 'reconciliation_interval_minutes'))
+            setting = res.scalars().first()
+            interval_mins = int(setting.value) if setting and setting.value.isdigit() else 60
+            
+            res_thresh = await session.execute(select(Setting).where(Setting.key == 'stuck_flight_threshold_minutes'))
+            thresh_setting = res_thresh.scalars().first()
+            threshold_mins = int(thresh_setting.value) if thresh_setting and thresh_setting.value.isdigit() else 120
+            
+            # 2. Check if we should run (we can track last run time in settings)
+            res_last = await session.execute(select(Setting).where(Setting.key == 'last_reconciliation_run'))
+            last_run_setting = res_last.scalars().first()
+            
+            now = datetime.now(timezone.utc)
+            if last_run_setting:
+                try:
+                    last_run = datetime.fromisoformat(last_run_setting.value)
+                    if (now - last_run).total_seconds() < (interval_mins * 60):
+                        return # Not time yet
+                except: pass
+                
+            logger.info("Running stuck flight reconciliation job...")
+            
+            # 3. Find stuck flights
+            cutoff_time = now - timedelta(minutes=threshold_mins)
+            
+            # Flights that are active but their aircraft hasn't had a position since cutoff
+            # Simple approach: find all active flights, then check latest position
+            result = await session.execute(
+                select(Flight).where(Flight.status == "active")
+            )
+            active_flights = result.scalars().all()
+            
+            for f in active_flights:
+                try:
+                    # Look for recent positions
+                    # This is slightly inefficient but safe
+                    res_pos = await session.execute(
+                        select(Aircraft).where(Aircraft.id == f.aircraft_id)
+                    )
+                    ac = res_pos.scalars().first()
+                    
+                    if ac:
+                        # Check last position time (simplest is checking aircraft's last update or pulling position)
+                        from app.models import Position
+                        pos_res = await session.execute(
+                            select(Position).where(Position.aircraft_id == ac.id).order_by(Position.timestamp.desc()).limit(1)
+                        )
+                        last_pos = pos_res.scalars().first()
+                        
+                        if not last_pos or last_pos.timestamp < cutoff_time:
+                            logger.info(f"Flight {f.flight_number} is stuck (last pos: {last_pos.timestamp if last_pos else 'never'}). Attempting reconciliation.")
+                            await self.reconcile_flight(str(f.id), session)
+                            await asyncio.sleep(2) # rate limit
+                except Exception as e:
+                    logger.error(f"Error checking stuck flight {f.id}: {e}")
+            
+            # 4. Update last run
+            if last_run_setting:
+                last_run_setting.value = now.isoformat()
+            else:
+                session.add(Setting(key='last_reconciliation_run', value=now.isoformat()))
+            await session.commit()
+
+
+# Singleton
+reconciliation_service = ReconciliationService()

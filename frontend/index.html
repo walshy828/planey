@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Planey - Real-time flight tracking and management platform with interactive maps and Home Assistant integration">
+    <title>Planey — Flight Tracker</title>
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+    <!-- App CSS -->
+    <link rel="stylesheet" href="css/styles.css?v=7">
+
+    <!-- Favicon -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✈️</text></svg>">
+</head>
+<body>
+    <!-- ================================================================== -->
+    <!-- Top Navigation Bar                                                  -->
+    <!-- ================================================================== -->
+    <header id="app-header" class="app-header">
+        <div class="header-left">
+            <button id="btn-toggle-sidebar" class="btn-icon" aria-label="Toggle sidebar">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="3" y1="6" x2="21" y2="6"></line>
+                    <line x1="3" y1="12" x2="21" y2="12"></line>
+                    <line x1="3" y1="18" x2="21" y2="18"></line>
+                </svg>
+            </button>
+            <div class="logo">
+                <span class="logo-icon">✈</span>
+                <span class="logo-text">Planey</span>
+            </div>
+        </div>
+        <div class="header-center">
+            <div class="status-bar">
+                <div class="status-item" id="status-aircraft">
+                    <span class="status-label">Aircraft</span>
+                    <span class="status-value" id="stat-aircraft-count">0</span>
+                </div>
+                <div class="status-divider"></div>
+                <div class="status-item" id="status-flights">
+                    <span class="status-label">Active</span>
+                    <span class="status-value" id="stat-active-flights">0</span>
+                </div>
+                <div class="status-divider"></div>
+                <div class="status-item" id="status-positions">
+                    <span class="status-label">Positions</span>
+                    <span class="status-value" id="stat-positions">0</span>
+                </div>
+                <div class="status-divider"></div>
+                <div class="status-item" id="status-ws">
+                    <span class="status-dot disconnected" id="ws-dot"></span>
+                    <span class="status-label" id="ws-label">Disconnected</span>
+                </div>
+            </div>
+        </div>
+        <div class="header-right">
+            <button id="btn-add-aircraft" class="btn-primary btn-sm">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+                <span>Add Aircraft</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- ================================================================== -->
+    <!-- Main Content Area                                                   -->
+    <!-- ================================================================== -->
+    <main id="app-main" class="app-main">
+        <!-- Sidebar -->
+        <aside id="sidebar" class="sidebar">
+            <!-- Tab Navigation -->
+            <div class="sidebar-tabs">
+                <button class="tab-btn active" data-tab="aircraft" id="tab-aircraft">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/>
+                    </svg>
+                    Aircraft
+                </button>
+                <button class="tab-btn" data-tab="flights" id="tab-flights">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                        <line x1="16" y1="2" x2="16" y2="6"></line>
+                        <line x1="8" y1="2" x2="8" y2="6"></line>
+                        <line x1="3" y1="10" x2="21" y2="10"></line>
+                    </svg>
+                    Flights
+                </button>
+                <button class="tab-btn" data-tab="history" id="tab-history">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <polyline points="12 6 12 12 16 14"></polyline>
+                    </svg>
+                    History
+                </button>
+            </div>
+
+            <!-- Aircraft List Panel -->
+            <div class="tab-content active" id="panel-aircraft">
+                <div class="panel-header" style="flex-direction: column; align-items: stretch; gap: 10px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <h2>Tracked Aircraft</h2>
+                        <div class="sort-controls">
+                            <select id="aircraft-sort" class="input-field" style="font-size: 11px; padding: 4px 8px; height: auto; min-width: 120px;">
+                                <option value="status">Status (Active first)</option>
+                                <option value="tail">Tail Number</option>
+                                <option value="updated">Recently Updated</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="flight-filters" id="aircraft-filters">
+                        <button class="filter-btn active" data-filter="all">All</button>
+                        <button class="filter-btn" data-filter="active">Active</button>
+                        <button class="filter-btn" data-filter="ground">Ground</button>
+                    </div>
+                </div>
+                <div class="aircraft-list" id="aircraft-list">
+                    <div class="empty-state" id="aircraft-empty">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3">
+                            <path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/>
+                        </svg>
+                        <p>No aircraft tracked yet</p>
+                        <p class="empty-hint">Click "Add Aircraft" to get started</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Flights List Panel -->
+            <div class="tab-content" id="panel-flights">
+                <div class="panel-header">
+                    <h2>Flights</h2>
+                    <div class="flight-filters">
+                        <button class="filter-btn active" data-filter="active" id="filter-active">Active</button>
+                        <button class="filter-btn" data-filter="scheduled" id="filter-scheduled">Scheduled</button>
+                        <button class="filter-btn" data-filter="all" id="filter-all">All</button>
+                    </div>
+                </div>
+                <div class="flights-list" id="flights-list">
+                    <div class="empty-state" id="flights-empty">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3">
+                            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                            <line x1="16" y1="2" x2="16" y2="6"></line>
+                            <line x1="8" y1="2" x2="8" y2="6"></line>
+                        </svg>
+                        <p>No flights to display</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- History Panel -->
+            <div class="tab-content" id="panel-history">
+                <div class="panel-header">
+                    <h2>Flight History</h2>
+                </div>
+                <div class="history-controls">
+                    <select id="history-aircraft-select" class="select-input">
+                        <option value="">All Aircraft</option>
+                    </select>
+                    <input type="number" id="history-hours" class="input-field input-sm" value="24" min="1" max="720" placeholder="Hours">
+                </div>
+                <div class="history-list" id="history-list">
+                    <div class="empty-state" id="history-empty">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <polyline points="12 6 12 12 16 14"></polyline>
+                        </svg>
+                        <p>No history available</p>
+                    </div>
+                </div>
+            </div>
+            </div>
+            
+            <div class="sidebar-footer">
+                <button id="btn-settings" class="btn-ghost btn-full">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                    </svg>
+                    Settings
+                </button>
+            </div>
+        </aside>
+
+        <!-- Map Container -->
+        <div class="map-container">
+            <div id="map" class="map"></div>
+
+            <!-- Map Overlay Controls -->
+            <div class="map-controls">
+                <button id="btn-center-all" class="btn-icon map-btn" title="Center on all aircraft">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="22" y1="12" x2="18" y2="12"></line>
+                        <line x1="6" y1="12" x2="2" y2="12"></line>
+                        <line x1="12" y1="6" x2="12" y2="2"></line>
+                        <line x1="12" y1="22" x2="12" y2="18"></line>
+                    </svg>
+                </button>
+                <button id="btn-toggle-trails" class="btn-icon map-btn active" title="Toggle flight trails">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                    </svg>
+                </button>
+            </div>
+
+            <!-- Altitude Legend -->
+            <div class="altitude-legend" id="altitude-legend">
+                <div class="legend-title">Altitude</div>
+                <div class="legend-bar"></div>
+                <div class="legend-labels">
+                    <span>0</span>
+                    <span>10k</span>
+                    <span>20k</span>
+                    <span>30k</span>
+                    <span>40k+</span>
+                </div>
+            </div>
+
+            <!-- Timeline Bar -->
+            <div class="timeline-bar" id="timeline-bar" style="display: none;">
+                <div class="timeline-header">
+                    <span class="timeline-title" id="timeline-title">Flight Timeline</span>
+                    <button id="btn-close-timeline" class="btn-icon btn-xs">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+                <div class="timeline-track" id="timeline-track">
+                    <div class="timeline-progress" id="timeline-progress"></div>
+                    <div class="timeline-scrubber" id="timeline-scrubber"></div>
+                </div>
+                <div class="timeline-info">
+                    <span id="timeline-time">--:--</span>
+                    <span id="timeline-alt">-- ft</span>
+                    <span id="timeline-speed">-- kts</span>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- ================================================================== -->
+    <!-- Add Aircraft Modal                                                  -->
+    <!-- ================================================================== -->
+    <div class="modal-overlay" id="modal-add-aircraft" style="display: none;">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 id="modal-aircraft-title">Add Aircraft</h2>
+                <button class="btn-icon" id="btn-close-add-aircraft">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="input-tail-number">Tail Number (Registration)</label>
+                    <input type="text" id="input-tail-number" class="input-field" placeholder="e.g., N12345" autocomplete="off">
+                    <span class="form-hint">Aircraft registration number</span>
+                </div>
+                <div class="form-group">
+                    <label for="input-icao24">ICAO24 Hex (Optional)</label>
+                    <input type="text" id="input-icao24" class="input-field" placeholder="e.g., a1b2c3" maxlength="6" autocomplete="off">
+                    <span class="form-hint">Will be auto-detected from FlightRadar24 if not provided</span>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="input-aircraft-type">Aircraft Type</label>
+                        <input type="text" id="input-aircraft-type" class="input-field" placeholder="e.g., B738" autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label for="input-airline">Airline</label>
+                        <input type="text" id="input-airline" class="input-field" placeholder="e.g., American" autocomplete="off">
+                    </div>
+                </div>
+
+                <!-- Lookup Result Preview -->
+                <div id="lookup-result" class="lookup-result" style="display: none;">
+                    <div class="lookup-header">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                        </svg>
+                        <span>FlightRadar24 Data</span>
+                    </div>
+                    <div class="lookup-body" id="lookup-body"></div>
+                </div>
+
+                <button id="btn-lookup" class="btn-secondary btn-full">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"></circle>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                    </svg>
+                    Look Up on FlightRadar24
+                </button>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-ghost" id="btn-cancel-add-aircraft">Cancel</button>
+                <button class="btn-primary" id="btn-confirm-add-aircraft">Save Aircraft</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================================================================== -->
+    <!-- Add Flight Modal                                                    -->
+    <!-- ================================================================== -->
+    <div class="modal-overlay" id="modal-add-flight" style="display: none;">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 id="modal-flight-title">Add Flight</h2>
+                <button class="btn-icon" id="btn-close-add-flight">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="flight-aircraft-select">Aircraft</label>
+                    <select id="flight-aircraft-select" class="select-input">
+                        <option value="">Select Aircraft</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="input-flight-number">Flight Number</label>
+                    <input type="text" id="input-flight-number" class="input-field" placeholder="e.g., AA100" autocomplete="off">
+                    <span class="form-hint">Will auto-lookup route from FlightRadar24</span>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="input-departure">Departure (IATA)</label>
+                        <input type="text" id="input-departure" class="input-field" placeholder="e.g., JFK" maxlength="4" autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label for="input-arrival">Arrival (IATA)</label>
+                        <input type="text" id="input-arrival" class="input-field" placeholder="e.g., LAX" maxlength="4" autocomplete="off">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="input-dep-time">Scheduled Departure</label>
+                        <input type="datetime-local" id="input-dep-time" class="input-field">
+                    </div>
+                    <div class="form-group">
+                        <label for="input-arr-time">Scheduled Arrival</label>
+                        <input type="datetime-local" id="input-arr-time" class="input-field">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="input-flight-status">Status</label>
+                    <select id="input-flight-status" class="select-input">
+                        <option value="scheduled">Scheduled</option>
+                        <option value="active">Active</option>
+                        <option value="landed">Landed</option>
+                        <option value="cancelled">Cancelled</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-ghost" id="btn-cancel-add-flight">Cancel</button>
+                <button class="btn-primary" id="btn-confirm-add-flight">Add Flight</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================================================================== -->
+    <!-- Settings Modal                                                      -->
+    <!-- ================================================================== -->
+    <div class="modal-overlay" id="modal-settings" style="display: none;">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>Settings</h2>
+                <button class="btn-icon" id="btn-close-settings">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="set-polling-interval">Polling Interval (Airborne)</label>
+                    <div class="input-with-unit">
+                        <input type="number" id="set-polling-interval" class="input-field" value="60" min="5" max="3600">
+                        <span class="input-unit">seconds</span>
+                    </div>
+                    <span class="form-hint">How often to refresh aircraft positions while they are flying.</span>
+                </div>
+                <div class="form-group">
+                    <label for="set-sync-interval">Schedule Sync Interval</label>
+                    <div class="input-with-unit">
+                        <input type="number" id="set-sync-interval" class="input-field" value="30" min="5" max="1440">
+                        <span class="input-unit">minutes</span>
+                    </div>
+                    <span class="form-hint">How often to look ahead for new scheduled flights.</span>
+                </div>
+                <div class="form-group">
+                    <label for="set-reconciliation-interval">Stuck Flight Sweep Interval</label>
+                    <div class="input-with-unit">
+                        <input type="number" id="set-reconciliation-interval" class="input-field" value="60" min="5" max="1440">
+                        <span class="input-unit">minutes</span>
+                    </div>
+                    <span class="form-hint">How often the backend sweeps for active flights with no recent GPS updates to automatically close them out.</span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-ghost" id="btn-cancel-settings">Cancel</button>
+                <button class="btn-primary" id="btn-confirm-settings">Save Settings</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================================================================== -->
+    <!-- Toast Notifications                                                 -->
+    <!-- ================================================================== -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <!-- ================================================================== -->
+    <!-- Scripts                                                             -->
+    <!-- ================================================================== -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="/js/utils.js?v=7"></script>
+    <script src="/js/api.js?v=7"></script>
+    <script src="/js/map.js?v=7"></script>
+    <script src="/js/timeline.js?v=7"></script>
+    <script src="/js/flights.js?v=7"></script>
+    <script src="/js/app.js?v=7"></script>
+</body>
+</html>

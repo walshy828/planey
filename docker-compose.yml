@@ -1,0 +1,34 @@
+version: "3.8"
+
+services:
+  # ==========================================================================
+  # Planey - FastAPI backend + static frontend (single container)
+  # ==========================================================================
+  planey:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: planey
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8070:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/api/health').raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ==========================================================================
+  # FlareSolverr - Cloudflare bypass proxy
+  # ==========================================================================
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    restart: unless-stopped
+    ports:
+      - "${FLARESOLVERR_PORT:-8191}:8191"
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - TIMEZONE=UTC

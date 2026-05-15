@@ -1,0 +1,316 @@
+/**
+ * Planey - Map Component
+ * Leaflet map with altitude-colored flight paths and animated aircraft markers
+ */
+
+const FlightMap = {
+    map: null,
+    markers: {},       // aircraft_id → L.marker
+    trails: {},        // aircraft_id → L.polyline array (segments)
+    plannedRoutes: {}, // aircraft_id → L.polyline (dashed route)
+    airportMarkers: {}, // iata → L.circleMarker
+    showTrails: true,
+
+    init() {
+        this.map = L.map('map', {
+            center: [39.8283, -98.5795], // Center US
+            zoom: 4,
+            zoomControl: true,
+            attributionControl: false
+        });
+
+        // Dark tile layer
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            maxZoom: 19,
+            subdomains: 'abcd'
+        }).addTo(this.map);
+
+        // Attribution
+        L.control.attribution({ prefix: false, position: 'bottomleft' })
+            .addAttribution('© <a href="https://carto.com/">CARTO</a> · <a href="https://opensky-network.org">OpenSky</a>')
+            .addTo(this.map);
+
+        // Controls
+        document.getElementById('btn-center-all').addEventListener('click', () => this.fitAllMarkers());
+        document.getElementById('btn-toggle-trails').addEventListener('click', (e) => {
+            this.showTrails = !this.showTrails;
+            e.currentTarget.classList.toggle('active', this.showTrails);
+            this._toggleTrails();
+        });
+    },
+
+    /**
+     * Update or create a marker for an aircraft
+     */
+    updateMarker(aircraftId, data) {
+        const { latitude, longitude, heading, altitude_ft, tail_number, ground_speed_kts, vertical_rate_fpm, on_ground } = data;
+        if (latitude == null || longitude == null) return;
+
+        const pos = [latitude, longitude];
+        const color = Utils.altitudeColor(altitude_ft);
+
+        if (this.markers[aircraftId]) {
+            // Animate move
+            this.markers[aircraftId].setLatLng(pos);
+            this.markers[aircraftId].setIcon(Utils.airplaneIcon(heading, color));
+        } else {
+            // Create new marker
+            const marker = L.marker(pos, {
+                icon: Utils.airplaneIcon(heading, color),
+                zIndexOffset: 1000
+            }).addTo(this.map);
+
+            // Popup content
+            marker.bindPopup('', { className: 'flight-popup', maxWidth: 260 });
+            marker.on('click', () => {
+                marker.setPopupContent(this._popupHtml(data));
+            });
+
+            // Tooltip (Hover)
+            marker.bindTooltip(this._tooltipHtml(data), {
+                className: 'flight-tooltip',
+                direction: 'top',
+                offset: [0, -15],
+                sticky: false
+            });
+
+            this.markers[aircraftId] = marker;
+        }
+
+        // Update popup/tooltip if open
+        const marker = this.markers[aircraftId];
+        if (marker.isPopupOpen()) {
+            marker.setPopupContent(this._popupHtml(data));
+        }
+        if (marker.getTooltip()) {
+            marker.setTooltipContent(this._tooltipHtml(data));
+        }
+
+        // Add trail segment
+        if (this.showTrails) {
+            this._addTrailPoint(aircraftId, pos, altitude_ft);
+        }
+    },
+
+    /**
+     * Draw a complete trail from position history
+     */
+    drawTrail(aircraftId, positions) {
+        this.clearTrail(aircraftId);
+        if (!positions || positions.length < 2) return;
+
+        // API returns DESC (newest first), we need oldest first to build segments correctly
+        const sorted = [...positions].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+        const segments = [];
+        for (let i = 1; i < sorted.length; i++) {
+            const p1 = sorted[i - 1];
+            const p2 = sorted[i];
+            
+            // Skip if gap is too large (> 60 mins) to allow connecting across coverage gaps
+            const gap = (new Date(p2.timestamp) - new Date(p1.timestamp)) / 1000 / 60;
+            if (gap > 60) continue;
+
+            const color = Utils.altitudeColor((p1.altitude_ft + (p2.altitude_ft || 0)) / 2);
+            const line = L.polyline(
+                [[p1.latitude, p1.longitude], [p2.latitude, p2.longitude]],
+                { color, weight: 4, opacity: 0.8 }
+            );
+            
+            line.bindTooltip(this._trailTooltipHtml(p2), {
+                className: 'trail-tooltip',
+                direction: 'top',
+                sticky: true,
+                offset: [0, -5]
+            });
+
+            if (this.showTrails) line.addTo(this.map);
+            segments.push(line);
+        }
+        this.trails[aircraftId] = segments;
+    },
+
+    /**
+     * Add a single trail point (for real-time updates)
+     */
+    _addTrailPoint(aircraftId, pos, altFt) {
+        if (!this.trails[aircraftId]) this.trails[aircraftId] = [];
+        const segments = this.trails[aircraftId];
+
+        if (segments.length > 0) {
+            const last = segments[segments.length - 1];
+            const latLngs = last.getLatLngs();
+            const lastPos = latLngs[latLngs.length - 1];
+            
+            // Prevent drawing a line if the jump is too large (likely a stale position or new flight)
+            // Increased to 500km to allow for OpenSky coverage gaps before fallback kicks in
+            const dist = L.latLng(lastPos).distanceTo(L.latLng(pos));
+            if (dist > 500000) { // 500km
+                console.log(`[Map] Large jump detected for ${aircraftId} (${Math.round(dist/1000)}km), starting new segment`);
+                return;
+            }
+
+            const color = Utils.altitudeColor(altFt);
+            const seg = L.polyline([lastPos, pos], { color, weight: 4, opacity: 0.8 });
+            
+            seg.bindTooltip(this._trailTooltipHtml({
+                altitude_ft: altFt,
+                timestamp: new Date().toISOString()
+            }), {
+                className: 'trail-tooltip',
+                direction: 'top',
+                sticky: true,
+                offset: [0, -5]
+            });
+
+            seg.addTo(this.map);
+            segments.push(seg);
+        } else {
+            // Store first point, wait for next
+            const placeholder = L.polyline([pos, pos], { opacity: 0 });
+            segments.push(placeholder);
+        }
+    },
+
+    clearTrail(aircraftId) {
+        if (this.trails[aircraftId]) {
+            this.trails[aircraftId].forEach(s => s.remove());
+            delete this.trails[aircraftId];
+        }
+    },
+
+    /**
+     * Draw a dashed straight line representing the planned route
+     */
+    drawPlannedRoute(aircraftId, flight) {
+        // Clear existing planned route if any
+        if (this.plannedRoutes[aircraftId]) {
+            this.plannedRoutes[aircraftId].remove();
+            delete this.plannedRoutes[aircraftId];
+        }
+
+        if (!flight || flight.status !== 'scheduled') return;
+        if (!flight.departure_lat || !flight.departure_lon || !flight.arrival_lat || !flight.arrival_lon) return;
+
+        const dep = [flight.departure_lat, flight.departure_lon];
+        const arr = [flight.arrival_lat, flight.arrival_lon];
+
+        const line = L.polyline([dep, arr], {
+            color: '#a0a0a0',
+            weight: 2,
+            opacity: 0.6,
+            dashArray: '10, 10'
+        });
+
+        line.bindTooltip(`Planned: ${flight.departure_iata || '?'} → ${flight.arrival_iata || '?'}`, {
+            className: 'trail-tooltip',
+            direction: 'center',
+            sticky: true
+        });
+
+        line.addTo(this.map);
+        this.plannedRoutes[aircraftId] = line;
+    },
+
+    removeMarker(aircraftId) {
+        if (this.markers[aircraftId]) {
+            this.markers[aircraftId].remove();
+            delete this.markers[aircraftId];
+        }
+        this.clearTrail(aircraftId);
+    },
+
+    /**
+     * Add airport markers for departure/arrival
+     */
+    addAirportMarker(iata, lat, lng, name) {
+        if (this.airportMarkers[iata]) return;
+        if (!lat || !lng) return;
+
+        const marker = L.circleMarker([lat, lng], {
+            radius: 5, fillColor: '#a78bfa', fillOpacity: 0.8,
+            color: '#a78bfa', weight: 1, opacity: 0.6
+        }).addTo(this.map);
+
+        marker.bindTooltip(`${iata} — ${name || ''}`, {
+            className: 'airport-tooltip', direction: 'top', offset: [0, -8]
+        });
+
+        this.airportMarkers[iata] = marker;
+    },
+
+    fitAllMarkers() {
+        const keys = Object.keys(this.markers);
+        if (keys.length === 0) return;
+        const group = L.featureGroup(keys.map(k => this.markers[k]));
+        this.map.fitBounds(group.getBounds().pad(0.2));
+    },
+
+    focusAircraft(aircraftId) {
+        const m = this.markers[aircraftId];
+        if (m) {
+            this.map.flyTo(m.getLatLng(), 8, { duration: 1 });
+        }
+    },
+
+    _toggleTrails() {
+        Object.values(this.trails).forEach(segments => {
+            segments.forEach(s => {
+                if (this.showTrails) s.addTo(this.map);
+                else s.remove();
+            });
+        });
+    },
+
+    _popupHtml(data) {
+        return `
+            <div style="min-width:200px">
+                <div style="font-size:15px;font-weight:700;color:#00d4ff;margin-bottom:6px">
+                    ${data.tail_number || 'Unknown'}
+                    ${data.flight_number ? `<span style="font-size:12px;color:#8899aa;margin-left:6px">${data.flight_number}</span>` : ''}
+                </div>
+                ${data.departure_iata || data.arrival_iata ? `
+                    <div style="font-size:14px;margin-bottom:8px;display:flex;align-items:center;gap:6px">
+                        <strong>${data.departure_iata || '???'}</strong>
+                        <span style="color:#556677">→</span>
+                        <strong>${data.arrival_iata || '???'}</strong>
+                    </div>
+                ` : ''}
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:12px">
+                    <div><span style="color:#556677">Alt:</span> ${Utils.formatAlt(data.altitude_ft)}</div>
+                    <div><span style="color:#556677">Spd:</span> ${Utils.formatSpeed(data.ground_speed_kts)}</div>
+                    <div><span style="color:#556677">Hdg:</span> ${Utils.formatHeading(data.heading)}</div>
+                    <div><span style="color:#556677">VS:</span> ${Utils.formatVRate(data.vertical_rate_fpm)}</div>
+                </div>
+                <div style="font-size:10px;color:#556677;margin-top:6px">
+                    ${data.timestamp ? `<span class="live-time-ago" data-timestamp="${data.timestamp}">${Utils.timeAgo(data.timestamp)}</span>` : ''}
+                </div>
+            </div>
+        `;
+    },
+
+    _trailTooltipHtml(pos) {
+        return `
+            <div style="font-size:11px; line-height:1.2">
+                <div style="color:#00d4ff; font-weight:bold">${Utils.formatDateTime(pos.timestamp)}</div>
+                <div>Alt: ${Utils.formatAlt(pos.altitude_ft)}</div>
+                ${pos.ground_speed_kts ? `<div>Spd: ${Utils.formatSpeed(pos.ground_speed_kts)}</div>` : ''}
+            </div>
+        `;
+    },
+
+    _tooltipHtml(data) {
+        return `
+            <div style="line-height:1.2">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">
+                    <span style="font-weight:bold;color:#00d4ff;">${data.tail_number}</span>
+                    ${data.timestamp ? `<span class="live-time-ago" data-timestamp="${data.timestamp}" style="font-size:9px;color:#8899aa;margin-left:8px;">${Utils.timeAgo(data.timestamp)}</span>` : ''}
+                </div>
+                <div style="font-size:11px">
+                    ${Utils.formatAlt(data.altitude_ft)} | ${Utils.formatSpeed(data.ground_speed_kts)}<br/>
+                    ${Utils.formatHeading(data.heading)} | ${Utils.formatVRate(data.vertical_rate_fpm)}
+                </div>
+            </div>
+        `;
+    }
+};
