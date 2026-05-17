@@ -26,14 +26,15 @@ class ReconciliationService:
         from sqlalchemy import update
 
         # 1. Determine baseline timeframe of this flight
-        flight_start = flight.actual_departure or flight.scheduled_departure or flight.created_at
-        flight_end = flight.actual_arrival or flight.scheduled_arrival or datetime.now(timezone.utc)
+        def ensure_utc(dt: Optional[datetime]) -> Optional[datetime]:
+            if dt is None:
+                return None
+            if dt.tzinfo is None:
+                return dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc)
 
-        # Ensure naive/aware compatibility
-        if flight_start and flight_start.tzinfo is not None:
-            flight_start = flight_start.replace(tzinfo=None)
-        if flight_end and flight_end.tzinfo is not None:
-            flight_end = flight_end.replace(tzinfo=None)
+        flight_start = ensure_utc(flight.actual_departure or flight.scheduled_departure or flight.created_at)
+        flight_end = ensure_utc(flight.actual_arrival or flight.scheduled_arrival or datetime.now(timezone.utc))
 
         # 2. Query other flights for the same aircraft to find boundaries
         flights_res = await db.execute(
@@ -59,14 +60,14 @@ class ReconciliationService:
                 p_flight = all_flights[flight_idx - 1]
                 p_end = p_flight.actual_arrival or p_flight.scheduled_arrival or p_flight.actual_departure or p_flight.scheduled_departure
                 if p_end:
-                    prev_end = p_end.replace(tzinfo=None) if p_end.tzinfo is not None else p_end
+                    prev_end = ensure_utc(p_end)
 
             # Succeeding flight (closest index after us)
             if flight_idx < len(all_flights) - 1:
                 n_flight = all_flights[flight_idx + 1]
                 n_start = n_flight.actual_departure or n_flight.scheduled_departure or n_flight.created_at
                 if n_start:
-                    next_start = n_start.replace(tzinfo=None) if n_start.tzinfo is not None else n_start
+                    next_start = ensure_utc(n_start)
 
         # 3. Calculate start/end limits with buffers
         # Preceding flight limit
@@ -96,6 +97,7 @@ class ReconciliationService:
                 Position.timestamp <= end_limit
             )
             .values(flight_id=flight.id)
+            .execution_options(synchronize_session=False)
         )
         result = await db.execute(q)
         rowcount = result.rowcount

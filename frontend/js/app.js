@@ -25,7 +25,10 @@ const App = {
         ]);
         
         // Load initial trails for map
-        Flights.loadInitialTrails();
+        await Flights.loadInitialTrails();
+        
+        // Adjust default map view based on active tracks or last known positions
+        FlightMap.updateDefaultMapView();
 
         // Periodic refresh (every 30s for stats, aircraft cards)
         this.refreshInterval = setInterval(() => {

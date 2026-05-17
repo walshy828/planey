@@ -31,7 +31,7 @@ const FlightMap = {
             .addTo(this.map);
 
         // Controls
-        document.getElementById('btn-center-all').addEventListener('click', () => this.fitAllMarkers());
+        document.getElementById('btn-center-all').addEventListener('click', () => this.updateDefaultMapView());
         document.getElementById('btn-toggle-trails').addEventListener('click', (e) => {
             this.showTrails = !this.showTrails;
             e.currentTarget.classList.toggle('active', this.showTrails);
@@ -240,16 +240,89 @@ const FlightMap = {
     },
 
     fitAllMarkers() {
-        const keys = Object.keys(this.markers);
-        if (keys.length === 0) return;
-        const group = L.featureGroup(keys.map(k => this.markers[k]));
-        this.map.fitBounds(group.getBounds().pad(0.2));
+        this.updateDefaultMapView();
     },
 
     focusAircraft(aircraftId) {
         const m = this.markers[aircraftId];
-        if (m) {
-            this.map.flyTo(m.getLatLng(), 8, { duration: 1 });
+        if (!m) return;
+
+        // Check if there is a track/trail for this aircraft
+        const segments = this.trails[aircraftId];
+        const latLngs = [];
+        if (segments && segments.length > 0) {
+            segments.forEach(seg => {
+                const pts = seg.getLatLngs();
+                pts.forEach(p => {
+                    if (Array.isArray(p)) {
+                        p.forEach(subP => latLngs.push(L.latLng(subP)));
+                    } else {
+                        latLngs.push(L.latLng(p));
+                    }
+                });
+            });
+        }
+
+        // Add the marker position as well
+        latLngs.push(m.getLatLng());
+
+        if (latLngs.length > 1) {
+            // Fit bounds to cover the track
+            const bounds = L.latLngBounds(latLngs);
+            this.map.flyToBounds(bounds.pad(0.15), { duration: 1.2 });
+        } else {
+            // No track (only the aircraft marker), zoom to US state level (zoom 7)
+            this.map.flyTo(m.getLatLng(), 7, { duration: 1.2 });
+        }
+    },
+
+    /**
+     * Center and zoom the map to cover all active tracks.
+     * If there are no tracks, center on the last known position at a US state level (zoom 7).
+     * If there are no markers or tracks, keep default US center.
+     */
+    updateDefaultMapView() {
+        const latLngs = [];
+        
+        // 1. Gather all coordinates from all active trails
+        Object.values(this.trails).forEach(segments => {
+            segments.forEach(seg => {
+                const pts = seg.getLatLngs();
+                pts.forEach(p => {
+                    if (Array.isArray(p)) {
+                        p.forEach(subP => latLngs.push(L.latLng(subP)));
+                    } else {
+                        latLngs.push(L.latLng(p));
+                    }
+                });
+            });
+        });
+
+        if (latLngs.length > 1) {
+            // Fit bounds to cover all current tracks
+            const bounds = L.latLngBounds(latLngs);
+            this.map.fitBounds(bounds.pad(0.15));
+            console.log("[Map] Zoomed and centered to cover current tracks.");
+            return;
+        }
+
+        // 2. If no tracks, look for last known aircraft positions (markers)
+        const markerLatLngs = [];
+        Object.values(this.markers).forEach(marker => {
+            markerLatLngs.push(marker.getLatLng());
+        });
+
+        if (markerLatLngs.length > 0) {
+            // Focus on the first/primary or selected aircraft
+            let targetLatLng = markerLatLngs[0];
+            if (window.Flights && Flights.selectedAircraftId && this.markers[Flights.selectedAircraftId]) {
+                targetLatLng = this.markers[Flights.selectedAircraftId].getLatLng();
+            }
+            // State-level zoom (7)
+            this.map.setView(targetLatLng, 7);
+            console.log("[Map] No tracks found. Centered on last known position at US state level (zoom 7).");
+        } else {
+            console.log("[Map] No tracks or active positions found. Map kept at default US view.");
         }
     },
 

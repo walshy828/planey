@@ -121,7 +121,7 @@ const Flights = {
 
     /** Load recent history for all active aircraft to draw trails on startup */
     async loadInitialTrails() {
-        for (const ac of this.aircraft) {
+        const promises = this.aircraft.map(async (ac) => {
             try {
                 // Fetch last 4 hours of positions for each aircraft
                 const positions = await API.getPositionHistory(ac.id, 4);
@@ -131,13 +131,17 @@ const Flights = {
                     const latest = positions[positions.length - 1];
                     FlightMap.updateMarker(ac.id, {
                         ...latest,
-                        tail_number: ac.tail_number
+                        tail_number: ac.tail_number,
+                        flight_number: ac.active_flight?.flight_number,
+                        departure_iata: ac.active_flight?.departure_iata,
+                        arrival_iata: ac.active_flight?.arrival_iata,
                     });
                 }
             } catch (err) {
                 console.warn(`Failed to load initial trail for ${ac.tail_number}:`, err);
             }
-        }
+        });
+        await Promise.all(promises);
     },
 
     async loadFlights() {
