@@ -235,4 +235,14 @@ class WebhookFlightDeparted(BaseModel):
     departure_iata: Optional[str] = Field(None, description="Departure Airport IATA/ICAO")
     arrival_iata: Optional[str] = Field(None, description="Arrival Airport IATA/ICAO")
     actual_departure: Optional[datetime] = Field(None, description="Actual Departure Time (ISO 8601)")
+    scheduled_arrival: Optional[datetime] = Field(None, description="Estimated/Scheduled Arrival Time (ISO 8601)")
+
+
+class WebhookFlightArrived(BaseModel):
+    """Payload from N8N when an aircraft lands/arrives."""
+    tail_number: str = Field(..., description="Aircraft registration (e.g., N12345)")
+    flight_number: Optional[str] = Field(None, description="Airline flight number if applicable")
+    arrival_iata: Optional[str] = Field(None, description="Arrival Airport IATA/ICAO")
+    actual_arrival: Optional[datetime] = Field(None, description="Actual Arrival Time (ISO 8601)")
+
 

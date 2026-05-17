@@ -256,6 +256,8 @@ const Flights = {
                     <div>
                         <div class="aircraft-tail">${ac.tail_number}</div>
                         <div class="aircraft-type">${ac.aircraft_type || 'Unknown type'}${ac.airline ? ` · ${ac.airline}` : ''}</div>
+                        ${pos ? `<div class="aircraft-collapsed-location" id="loc-collapsed-${ac.id}">Loading last location...</div>` : ''}
+                        ${pos ? `<div class="aircraft-collapsed-activity">${pos.on_ground ? 'Landed' : 'Active'}: <span class="${pos.on_ground ? '' : 'live-time-ago'}" data-timestamp="${pos.on_ground ? '' : pos.timestamp}">${pos.on_ground ? Utils.formatDateTime(pos.timestamp) : Utils.timeAgo(pos.timestamp)}</span></div>` : ''}
                     </div>
                     <div style="display: flex; gap: 8px; align-items: center;">
                         <button class="btn-primary btn-xs btn-add-flight-for" data-id="${ac.id}" style="padding: 2px 6px; font-size: 10px;">+ Flight</button>
@@ -382,6 +384,8 @@ const Flights = {
                 Utils.getLocationName(pos.latitude, pos.longitude).then(name => {
                     const el = document.getElementById(`loc-${ac.id}`);
                     if (el) el.textContent = name;
+                    const elCollapsed = document.getElementById(`loc-collapsed-${ac.id}`);
+                    if (elCollapsed) elCollapsed.textContent = name;
                 });
             }
         }

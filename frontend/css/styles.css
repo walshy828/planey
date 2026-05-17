@@ -154,6 +154,27 @@ body {
 .aircraft-card.collapsed .aircraft-actions-modern {
     display: none;
 }
+.aircraft-collapsed-location {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 4px;
+    display: none;
+}
+.aircraft-card.collapsed .aircraft-collapsed-location {
+    display: block;
+}
+.aircraft-collapsed-activity {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
+    display: none;
+}
+.aircraft-card.collapsed .aircraft-collapsed-activity {
+    display: block;
+}
+.aircraft-card.collapsed .aircraft-card-header {
+    margin-bottom: 0;
+}
 .btn-collapse {
     background: transparent;
     border: none;
