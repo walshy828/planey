@@ -112,6 +112,19 @@ async def lifespan(app: FastAPI):
     scheduler.start()
     logger.info(f"Scheduler started - polling every {poll_interval}s")
 
+    # Trigger background reconciliation sweep on startup
+    async def run_startup_reconciliation():
+        await asyncio.sleep(5)  # Let application startup fully
+        logger.info("Running startup reconciliation sweep...")
+        try:
+            async with async_session() as session:
+                res = await reconciliation_service.reconcile_all_active_flights(session)
+                logger.info(f"Startup reconciliation sweep completed: {res}")
+        except Exception as startup_err:
+            logger.error(f"Failed to run startup reconciliation sweep: {startup_err}")
+
+    asyncio.create_task(run_startup_reconciliation())
+
     yield
 
     # Shutdown

@@ -414,7 +414,20 @@
                     </div>
                     <span class="form-hint">How often the backend sweeps for active flights with no recent GPS updates to automatically close them out.</span>
                 </div>
+                <div class="form-group" style="margin-top: 20px; border-top: 1px solid var(--border-color); padding-top: 20px;">
+                    <label>Manual Actions</label>
+                    <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 10px;">
+                        <button type="button" class="btn-secondary" id="btn-reconcile-all" style="display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%;">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="icon-reconcile">
+                                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+                            </svg>
+                            <span id="text-reconcile">Reconcile All Aircraft Now</span>
+                        </button>
+                        <span class="form-hint">Checks all active/scheduled flights against external sources. If the aircraft is found to have landed or been cancelled, it will close the flight and place the aircraft on the ground.</span>
+                    </div>
+                </div>
             </div>
+
             <div class="modal-footer">
                 <button class="btn-ghost" id="btn-cancel-settings">Cancel</button>
                 <button class="btn-primary" id="btn-confirm-settings">Save Settings</button>

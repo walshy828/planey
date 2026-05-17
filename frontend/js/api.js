@@ -62,6 +62,8 @@ const API = {
     getHealth() { return this.get('/health'); },
     getSettings() { return this.get('/settings'); },
     updateSettings(settings) { return this.post('/settings', { settings }); },
+    reconcileAll() { return this.post('/settings/reconcile'); },
+
 
     // ── WebSocket ──
     connectWS() {

@@ -42,3 +42,14 @@ async def update_settings(update: SettingUpdate, db: AsyncSession = Depends(get_
             print(f"Failed to reschedule poll_positions: {e}")
 
     return {"status": "success"}
+
+@router.post("/reconcile")
+async def reconcile_all_flights(db: AsyncSession = Depends(get_db)):
+    """Run an on-demand reconciliation sweep for all aircraft with open flights."""
+    from app.services.reconciliation import reconciliation_service
+    try:
+        result = await reconciliation_service.reconcile_all_active_flights(db)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Reconciliation sweep failed: {e}")
+

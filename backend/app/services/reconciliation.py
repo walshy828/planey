@@ -148,6 +148,34 @@ class ReconciliationService:
             # Create a grounded position so the UI doesn't show it stuck mid-air
             dest_lat = fa_data.get("dest_lat")
             dest_lon = fa_data.get("dest_lon")
+            
+            # Fallback 1: Resolve destination airport coordinates using its IATA code
+            arrival_iata = fa_data.get("arrival_iata") or flight.arrival_iata
+            if (not dest_lat or not dest_lon) and arrival_iata:
+                try:
+                    airport_info = fr24_client.get_airport_info(arrival_iata)
+                    if airport_info and airport_info.get("latitude") and airport_info.get("longitude"):
+                        dest_lat = airport_info["latitude"]
+                        dest_lon = airport_info["longitude"]
+                        logger.info(f"Resolved arrival airport {arrival_iata} coordinates: {dest_lat}, {dest_lon}")
+                except Exception as ex:
+                    logger.warning(f"Failed to lookup airport coordinates for {arrival_iata}: {ex}")
+            
+            # Fallback 2: Fallback to aircraft's latest position coordinates in the database
+            if not dest_lat or not dest_lon:
+                from app.models import Position
+                pos_result = await db.execute(
+                    select(Position)
+                    .where(Position.aircraft_id == aircraft.id)
+                    .order_by(Position.timestamp.desc())
+                    .limit(1)
+                )
+                latest_pos = pos_result.scalars().first()
+                if latest_pos:
+                    dest_lat = latest_pos.latitude
+                    dest_lon = latest_pos.longitude
+                    logger.info(f"Fallback to aircraft last known coordinates for {aircraft.tail_number}: {dest_lat}, {dest_lon}")
+            
             if dest_lat and dest_lon:
                 from app.models import Position
                 new_pos = Position(
@@ -304,6 +332,197 @@ class ReconciliationService:
                 session.add(Setting(key='last_reconciliation_run', value=now.isoformat()))
             await session.commit()
 
+    async def reconcile_aircraft(self, aircraft_id: str, db: AsyncSession) -> dict:
+        """
+        Manually reconcile an aircraft's position and grounded status.
+        Looks up the aircraft's latest flight/status externally.
+        If the external source indicates it is on the ground (or no live flight),
+        creates a grounded position and resets metrics.
+        """
+        # Fetch aircraft
+        result_ac = await db.execute(
+            select(Aircraft).where(Aircraft.id == aircraft_id)
+        )
+        aircraft = result_ac.scalars().first()
+        if not aircraft:
+            raise ValueError(f"Aircraft {aircraft_id} not found")
+            
+        # Get latest position
+        from app.models import Position
+        pos_result = await db.execute(
+            select(Position)
+            .where(Position.aircraft_id == aircraft.id)
+            .order_by(Position.timestamp.desc())
+            .limit(1)
+        )
+        latest_pos = pos_result.scalars().first()
+        
+        if not latest_pos:
+            return {"status": "skipped", "message": "No position history to reconcile"}
+            
+        if latest_pos.on_ground:
+            return {"status": "skipped", "message": "Aircraft is already on ground"}
+            
+        logger.info(f"Reconciling stuck airborne aircraft {aircraft.tail_number}")
+        
+        # Lookup latest flight info
+        fa_data = await fr24_client.lookup_flight(registration=aircraft.tail_number)
+        
+        # If external source says on the ground, or we have no live flight info (meaning it landed)
+        is_grounded = True
+        dest_lat = None
+        dest_lon = None
+        arrival_name = None
+        arrival_iata = None
+        
+        if fa_data:
+            ext_status = fa_data.get("status", "").lower()
+            # If external source explicitly says it's active or live, we don't ground it
+            if ext_status in ["active", "en route", "live"]:
+                is_grounded = False
+                logger.info(f"Aircraft {aircraft.tail_number} is actively flying according to external source")
+            else:
+                arrival_iata = fa_data.get("arrival_iata")
+                arrival_name = fa_data.get("arrival_name")
+                dest_lat = fa_data.get("dest_lat")
+                dest_lon = fa_data.get("dest_lon")
+        
+        if is_grounded:
+            # Resolve coordinates of destination airport if missing
+            if (not dest_lat or not dest_lon) and arrival_iata:
+                try:
+                    airport_info = fr24_client.get_airport_info(arrival_iata)
+                    if airport_info and airport_info.get("latitude") and airport_info.get("longitude"):
+                        dest_lat = airport_info["latitude"]
+                        dest_lon = airport_info["longitude"]
+                        logger.info(f"Resolved destination airport {arrival_iata} coordinates: {dest_lat}, {dest_lon}")
+                except Exception as ex:
+                    logger.warning(f"Failed to lookup airport coordinates: {ex}")
+            
+            # Fallback to last known position coordinates
+            if not dest_lat or not dest_lon:
+                dest_lat = latest_pos.latitude
+                dest_lon = latest_pos.longitude
+                logger.info(f"Fallback to aircraft last known coordinates for {aircraft.tail_number}: {dest_lat}, {dest_lon}")
+                
+            # Create a grounded position
+            new_pos = Position(
+                aircraft_id=aircraft.id,
+                latitude=dest_lat,
+                longitude=dest_lon,
+                altitude_ft=0,
+                ground_speed_kts=0,
+                heading=0,
+                vertical_rate_fpm=0,
+                on_ground=True,
+                source="reconciliation",
+                timestamp=datetime.now(timezone.utc),
+                location_name=arrival_name or arrival_iata or latest_pos.location_name
+            )
+            db.add(new_pos)
+            
+            # Update Home Assistant
+            await ha_service.update_aircraft_sensor(
+                tail_number=aircraft.tail_number,
+                status="Landed",
+                flight_data=None,
+                position_data={"on_ground": True}
+            )
+            
+            await db.commit()
+            return {"status": "success", "message": f"Aircraft grounded at {arrival_iata or 'last known position'}"}
+            
+        return {"status": "skipped", "message": "External source says aircraft is still active"}
+
+    async def reconcile_all_active_flights(self, db: AsyncSession) -> dict:
+        """Manually reconcile all active and scheduled flights on demand, plus stuck airborne aircraft."""
+        # Find all active or scheduled flights
+        result = await db.execute(
+            select(Flight).where(Flight.status.in_(["scheduled", "active"]))
+        )
+        open_flights = result.scalars().all()
+        
+        logger.info(f"Manual reconciliation triggered for {len(open_flights)} open flights")
+        
+        results = []
+        for flight in open_flights:
+            try:
+                res = await self.reconcile_flight(str(flight.id), db)
+                results.append({
+                    "flight_id": str(flight.id),
+                    "flight_number": flight.flight_number,
+                    "callsign": flight.callsign,
+                    "status": res.get("status"),
+                    "message": res.get("message")
+                })
+                # Add a tiny sleep to be friendly to APIs
+                await asyncio.sleep(0.5)
+            except Exception as e:
+                logger.error(f"Failed to manually reconcile flight {flight.id}: {e}")
+                results.append({
+                    "flight_id": str(flight.id),
+                    "flight_number": flight.flight_number,
+                    "callsign": flight.callsign,
+                    "status": "failed",
+                    "message": str(e)
+                })
+
+        # Also find all aircraft currently marked as airborne in their latest position
+        # but with no recent position updates (e.g. older than 15 minutes)
+        cutoff_time = datetime.now(timezone.utc) - timedelta(minutes=15)
+        
+        # Let's fetch all active aircraft
+        ac_result = await db.execute(
+            select(Aircraft).where(Aircraft.active == True)
+        )
+        all_aircraft = ac_result.scalars().all()
+        
+        stuck_aircraft = []
+        from app.models import Position
+        for ac in all_aircraft:
+            # Check if aircraft already has an open flight checked above to avoid double-checking
+            if any(r.get("flight_id") and any(f.aircraft_id == ac.id for f in open_flights) for r in results):
+                continue
+                
+            pos_result = await db.execute(
+                select(Position)
+                .where(Position.aircraft_id == ac.id)
+                .order_by(Position.timestamp.desc())
+                .limit(1)
+            )
+            latest_pos = pos_result.scalars().first()
+            
+            if latest_pos and not latest_pos.on_ground and latest_pos.timestamp < cutoff_time:
+                stuck_aircraft.append(ac)
+
+        logger.info(f"Manual reconciliation identified {len(stuck_aircraft)} stuck airborne aircraft")
+        
+        for ac in stuck_aircraft:
+            try:
+                res = await self.reconcile_aircraft(str(ac.id), db)
+                results.append({
+                    "aircraft_id": str(ac.id),
+                    "tail_number": ac.tail_number,
+                    "status": res.get("status"),
+                    "message": res.get("message")
+                })
+                await asyncio.sleep(0.5)
+            except Exception as e:
+                logger.error(f"Failed to manually reconcile stuck aircraft {ac.tail_number}: {e}")
+                results.append({
+                    "aircraft_id": str(ac.id),
+                    "tail_number": ac.tail_number,
+                    "status": "failed",
+                    "message": str(e)
+                })
+
+        return {
+            "total_checked": len(open_flights),
+            "total_aircraft_checked": len(stuck_aircraft),
+            "results": results
+        }
+
 
 # Singleton
 reconciliation_service = ReconciliationService()
+

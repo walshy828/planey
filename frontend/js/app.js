@@ -52,6 +52,7 @@ const App = {
         document.getElementById('btn-close-settings').addEventListener('click', () => this.hideSettings());
         document.getElementById('btn-cancel-settings').addEventListener('click', () => this.hideSettings());
         document.getElementById('btn-confirm-settings').addEventListener('click', () => this.saveSettings());
+        document.getElementById('btn-reconcile-all').addEventListener('click', () => this.triggerReconcileAll());
 
         console.log('✈ Planey ready');
     },
@@ -92,6 +93,53 @@ const App = {
             this.hideSettings();
         } catch (err) {
             Utils.toast(err.message, 'error');
+        }
+    },
+
+    async triggerReconcileAll() {
+        const btn = document.getElementById('btn-reconcile-all');
+        const text = document.getElementById('text-reconcile');
+        const icon = document.getElementById('icon-reconcile');
+        
+        // Save original states
+        const originalText = text.textContent;
+
+        // Set loading state
+        btn.disabled = true;
+        text.textContent = 'Reconciling...';
+        icon.style.animation = 'spin 1.5s linear infinite';
+        
+        try {
+            const res = await API.reconcileAll();
+            
+            // Reload all aircraft and flights immediately
+            await Promise.all([
+                Flights.loadAircraft(),
+                Flights.loadFlights()
+            ]);
+            
+            // Check count of successfully reconciled flights and stuck aircraft
+            const totalFlights = res.total_checked || 0;
+            const updatedFlights = res.results ? res.results.filter(r => r.status === 'success' && r.flight_id).length : 0;
+            const totalAircraft = res.total_aircraft_checked || 0;
+            const updatedAircraft = res.results ? res.results.filter(r => r.status === 'success' && r.aircraft_id).length : 0;
+            
+            let msg = `Reconciliation completed.`;
+            if (totalAircraft > 0) {
+                msg += ` Checked ${totalFlights} flight(s) (updated ${updatedFlights}), and ${totalAircraft} stuck aircraft (grounded ${updatedAircraft}).`;
+            } else {
+                msg += ` Checked ${totalFlights} flight(s), updated ${updatedFlights} flight(s).`;
+            }
+            
+            Utils.toast(msg, 'success');
+        } catch (err) {
+            console.error('Reconciliation failed:', err);
+            Utils.toast(`Reconciliation failed: ${err.message || err}`, 'error');
+        } finally {
+            // Restore button state
+            btn.disabled = false;
+            text.textContent = originalText;
+            icon.style.animation = '';
         }
     }
 };
