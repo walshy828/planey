@@ -265,6 +265,13 @@ async def webhook_flight_departed(
     await db.commit()
     await db.refresh(flight)
 
+    # Dynamic scheduler polling rate adjustment
+    try:
+        from app.services.tracker import tracker_service
+        await tracker_service.update_tracker_polling_interval(db)
+    except Exception as e:
+        logger.error(f"Failed to update tracking interval: {e}")
+
     logger.info(f"Flight {flight.id} for {payload.tail_number} marked as ACTIVE from webhook.")
 
     # 3. Trigger Home Assistant alert so tracking begins in the smart home
@@ -361,7 +368,16 @@ async def webhook_flight_arrived(
             logger.info(f"Missed departure webhook: Promoting scheduled flight {flight.id} directly to landed.")
             
             if not flight.actual_departure:
-                flight.actual_departure = flight.scheduled_departure or (arr_time - timedelta(hours=1))
+                sched_dep = flight.scheduled_departure
+                if sched_dep:
+                    if sched_dep.tzinfo is None:
+                        sched_dep = sched_dep.replace(tzinfo=timezone.utc)
+                    if sched_dep < arr_time:
+                        flight.actual_departure = sched_dep
+                    else:
+                        flight.actual_departure = arr_time - timedelta(hours=1)
+                else:
+                    flight.actual_departure = arr_time - timedelta(hours=1)
             flight.status = "landed"
 
     # 4. If still no flight found, dynamically create a landed flight record
@@ -422,6 +438,13 @@ async def webhook_flight_arrived(
     # Retroactively reconcile any captured orphan positions
     from app.services.reconciliation import reconciliation_service
     await reconciliation_service.reconcile_orphan_positions(flight, db)
+
+    # Dynamic scheduler polling rate adjustment
+    try:
+        from app.services.tracker import tracker_service
+        await tracker_service.update_tracker_polling_interval(db)
+    except Exception as e:
+        logger.error(f"Failed to update tracking interval: {e}")
 
     logger.info(f"Flight {flight.id} for {payload.tail_number} marked as LANDED from webhook.")
 

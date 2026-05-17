@@ -358,6 +358,14 @@ async def sync_aircraft_from_flightaware(
                 await reconciliation_service.reconcile_orphan_positions(synced_flight, db)
             except Exception as re_err:
                 logger.error(f"Failed to reconcile positions for flight {synced_flight.id} on FA sync: {re_err}")
+
+        # Dynamic scheduler polling rate adjustment
+        try:
+            from app.services.tracker import tracker_service
+            await tracker_service.update_tracker_polling_interval(db)
+        except Exception as e:
+            logger.error(f"Failed to update tracking interval on FA sync: {e}")
+
         return {
             "status": "success",
             "message": f"Synced {added_count} new flights",

@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     # --- Application ---
     secret_key: str = "change-this-to-a-random-string"
     polling_interval_seconds: int = 60
+    polling_interval_passive_seconds: int = 300
     schedule_sync_interval_minutes: int = 30
     position_retention_days: int = 90
     log_level: str = "INFO"

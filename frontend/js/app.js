@@ -64,6 +64,13 @@ const App = {
             if (settings.polling_interval_seconds) {
                 document.getElementById('set-polling-interval').value = settings.polling_interval_seconds;
             }
+            if (settings.polling_interval_passive_seconds) {
+                document.getElementById('set-polling-interval-passive').value = settings.polling_interval_passive_seconds;
+            } else {
+                document.getElementById('set-polling-interval-passive').value = '300';
+            }
+            document.getElementById('set-manual-airborne-mode').checked = (settings.manual_airborne_mode === 'true');
+
             if (settings.schedule_sync_interval_minutes) {
                 document.getElementById('set-sync-interval').value = settings.schedule_sync_interval_minutes;
             }
@@ -83,13 +90,15 @@ const App = {
     async saveSettings() {
         const settings = {
             polling_interval_seconds: document.getElementById('set-polling-interval').value,
+            polling_interval_passive_seconds: document.getElementById('set-polling-interval-passive').value,
+            manual_airborne_mode: document.getElementById('set-manual-airborne-mode').checked ? 'true' : 'false',
             schedule_sync_interval_minutes: document.getElementById('set-sync-interval').value,
             reconciliation_interval_minutes: document.getElementById('set-reconciliation-interval').value,
         };
 
         try {
             await API.updateSettings(settings);
-            Utils.toast('Settings saved. Restart container to apply all changes.', 'success');
+            Utils.toast('Settings saved and applied successfully.', 'success');
             this.hideSettings();
         } catch (err) {
             Utils.toast(err.message, 'error');

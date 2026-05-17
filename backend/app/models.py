@@ -5,7 +5,8 @@ SQLAlchemy ORM models for Aircraft, Flight, and Position tracking.
 """
 
 import uuid
-from datetime import datetime, timezone
+import logging
+from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import (
     Boolean,
@@ -19,9 +20,11 @@ from sqlalchemy import (
     BigInteger,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSON
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.database import Base
+
+logger = logging.getLogger(__name__)
 
 
 def utcnow():
@@ -147,6 +150,50 @@ class Flight(Base):
     positions: Mapped[list["Position"]] = relationship(
         "Position", back_populates="flight", cascade="all, delete-orphan"
     )
+
+    @validates("actual_departure", "actual_arrival", "scheduled_departure", "scheduled_arrival")
+    def validate_times(self, key, value):
+        if value is None:
+            return value
+
+        # Ensure tz-aware datetimes
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+
+        if key == "actual_departure":
+            if self.actual_arrival:
+                arr = self.actual_arrival
+                if arr.tzinfo is None:
+                    arr = arr.replace(tzinfo=timezone.utc)
+                if value >= arr:
+                    logger.warning(f"Chronological anomaly corrected: actual_departure ({value}) was after/equal actual_arrival ({arr}). Adjusting departure to 1 hour before arrival.")
+                    return arr - timedelta(hours=1)
+        elif key == "actual_arrival":
+            if self.actual_departure:
+                dep = self.actual_departure
+                if dep.tzinfo is None:
+                    dep = dep.replace(tzinfo=timezone.utc)
+                if dep >= value:
+                    logger.warning(f"Chronological anomaly corrected: actual_departure ({dep}) was after/equal actual_arrival ({value}). Adjusting departure to 1 hour before arrival.")
+                    self.actual_departure = value - timedelta(hours=1)
+        elif key == "scheduled_departure":
+            if self.scheduled_arrival:
+                arr = self.scheduled_arrival
+                if arr.tzinfo is None:
+                    arr = arr.replace(tzinfo=timezone.utc)
+                if value >= arr:
+                    logger.warning(f"Chronological anomaly corrected: scheduled_departure ({value}) was after/equal scheduled_arrival ({arr}). Adjusting departure to 1 hour before arrival.")
+                    return arr - timedelta(hours=1)
+        elif key == "scheduled_arrival":
+            if self.scheduled_departure:
+                dep = self.scheduled_departure
+                if dep.tzinfo is None:
+                    dep = dep.replace(tzinfo=timezone.utc)
+                if dep >= value:
+                    logger.warning(f"Chronological anomaly corrected: scheduled_departure ({dep}) was after/equal scheduled_arrival ({value}). Adjusting departure to 1 hour before arrival.")
+                    self.scheduled_departure = value - timedelta(hours=1)
+
+        return value
 
     def __repr__(self):
         return f"<Flight {self.flight_number} {self.departure_iata}→{self.arrival_iata} [{self.status}]>"

@@ -46,23 +46,50 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info("Database initialized")
 
-    # Fetch polling interval from DB, fallback to settings
+    # Fetch polling settings from DB, fallback to configuration
     from app.database import async_session
     from sqlalchemy import select
-    from app.models import Setting
+    from app.models import Setting, Flight
     
     poll_interval = settings.polling_interval_seconds
+    passive_interval = settings.polling_interval_passive_seconds
+    manual_airborne = False
+    
     async with async_session() as session:
+        # Load airborne interval
         res = await session.execute(select(Setting).where(Setting.key == 'polling_interval_seconds'))
         db_setting = res.scalars().first()
         if db_setting and db_setting.value.isdigit():
             poll_interval = int(db_setting.value)
+            
+        # Load passive interval
+        res_passive = await session.execute(select(Setting).where(Setting.key == 'polling_interval_passive_seconds'))
+        db_setting_passive = res_passive.scalars().first()
+        if db_setting_passive and db_setting_passive.value.isdigit():
+            passive_interval = int(db_setting_passive.value)
+        
+        # Enforce passive >= airborne
+        passive_interval = max(passive_interval, poll_interval)
+            
+        # Load manual airborne mode
+        res_manual = await session.execute(select(Setting).where(Setting.key == 'manual_airborne_mode'))
+        db_setting_manual = res_manual.scalars().first()
+        if db_setting_manual:
+            manual_airborne = db_setting_manual.value == 'true'
+            
+        # Check active flights
+        res_active = await session.execute(select(Flight).where(Flight.status == 'active'))
+        has_active = res_active.scalars().first() is not None
+        
+        is_airborne_mode = has_active or manual_airborne
+        target_interval = poll_interval if is_airborne_mode else passive_interval
+        logger.info(f"Startup polling mode: {'Airborne' if is_airborne_mode else 'Passive'} (interval={target_interval}s)")
 
     # Schedule tracking poll
     scheduler.add_job(
         tracker_service.poll_positions,
         "interval",
-        seconds=poll_interval,
+        seconds=target_interval,
         id="poll_positions",
         name="Poll OpenSky positions",
         max_instances=1,

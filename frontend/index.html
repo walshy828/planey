@@ -399,6 +399,24 @@
                     <span class="form-hint">How often to refresh aircraft positions while they are flying.</span>
                 </div>
                 <div class="form-group">
+                    <label for="set-polling-interval-passive">Polling Interval (Passive)</label>
+                    <div class="input-with-unit">
+                        <input type="number" id="set-polling-interval-passive" class="input-field" value="300" min="5" max="3600">
+                        <span class="input-unit">seconds</span>
+                    </div>
+                    <span class="form-hint">How often to check aircraft positions when all tracked planes are grounded.</span>
+                </div>
+                <div class="form-group toggle-group" style="display: flex; align-items: center; justify-content: space-between; margin-top: 15px; margin-bottom: 20px; background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border-color); padding: 12px; border-radius: 8px;">
+                    <div style="flex: 1; padding-right: 12px;">
+                        <label style="margin-bottom: 2px; font-weight: 600; color: var(--text-primary);">Force Airborne Polling Mode</label>
+                        <span class="form-hint" style="font-size: 11px; margin-top: 2px; line-height: 1.3; display: block;">Keep high-frequency polling on. Reverts to passive mode after 30 minutes of no flying activity.</span>
+                    </div>
+                    <label class="switch">
+                        <input type="checkbox" id="set-manual-airborne-mode">
+                        <span class="slider round"></span>
+                    </label>
+                </div>
+                <div class="form-group">
                     <label for="set-sync-interval">Schedule Sync Interval</label>
                     <div class="input-with-unit">
                         <input type="number" id="set-sync-interval" class="input-field" value="30" min="5" max="1440">

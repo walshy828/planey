@@ -20,6 +20,13 @@ async def get_settings(db: AsyncSession = Depends(get_db)):
 
 @router.post("")
 async def update_settings(update: SettingUpdate, db: AsyncSession = Depends(get_db)):
+    # 1. Look up existing manual_airborne_mode in DB to see if it changes from false to true
+    manual_airborne_was_enabled = False
+    result_mode = await db.execute(select(Setting).where(Setting.key == "manual_airborne_mode"))
+    mode_setting = result_mode.scalars().first()
+    if mode_setting:
+        manual_airborne_was_enabled = mode_setting.value == "true"
+        
     for key, value in update.settings.items():
         # Check if exists
         result = await db.execute(select(Setting).where(Setting.key == key))
@@ -28,18 +35,34 @@ async def update_settings(update: SettingUpdate, db: AsyncSession = Depends(get_
             setting.value = value
         else:
             db.add(Setting(key=key, value=value))
+            
+    # 2. If manual_airborne_mode is being turned to true and wasn't before, set set_at timestamp
+    if update.settings.get("manual_airborne_mode") == "true" and not manual_airborne_was_enabled:
+        from datetime import datetime, timezone
+        timestamp_str = datetime.now(timezone.utc).isoformat()
+        
+        result_ts = await db.execute(select(Setting).where(Setting.key == "manual_airborne_mode_set_at"))
+        ts_setting = result_ts.scalars().first()
+        if ts_setting:
+            ts_setting.value = timestamp_str
+        else:
+            db.add(Setting(key="manual_airborne_mode_set_at", value=timestamp_str))
+            
+    # 3. If manual_airborne_mode is being turned to false, clear set_at timestamp
+    elif update.settings.get("manual_airborne_mode") == "false":
+        result_ts = await db.execute(select(Setting).where(Setting.key == "manual_airborne_mode_set_at"))
+        ts_setting = result_ts.scalars().first()
+        if ts_setting:
+            ts_setting.value = ""
     
     await db.commit()
     
-    # Reload settings in the background or notify services
-    if "polling_interval_seconds" in update.settings:
-        try:
-            from app.main import scheduler
-            new_interval = int(update.settings["polling_interval_seconds"])
-            scheduler.reschedule_job("poll_positions", trigger="interval", seconds=new_interval)
-            print(f"Rescheduled poll_positions to {new_interval}s")
-        except Exception as e:
-            print(f"Failed to reschedule poll_positions: {e}")
+    # 4. Trigger dynamic tracker reschedule
+    try:
+        from app.services.tracker import tracker_service
+        await tracker_service.update_tracker_polling_interval(db)
+    except Exception as e:
+        print(f"Failed to dynamically adjust tracker polling interval on settings save: {e}")
 
     return {"status": "success"}
 

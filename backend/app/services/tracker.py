@@ -11,7 +11,7 @@ Core orchestrator that runs on a schedule to:
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from sqlalchemy import select
@@ -313,6 +313,7 @@ class TrackerService:
                     # Still update HA for aircraft we're tracking but have no data for
                     for aircraft in aircraft_list:
                         await self._update_ha_no_position(aircraft, session)
+                    await self.update_tracker_polling_interval(session)
                     return
 
                 # Process each state vector
@@ -360,6 +361,7 @@ class TrackerService:
 
                 await session.commit()
                 logger.info(f"Stored {len(state_vectors)} positions")
+                await self.update_tracker_polling_interval(session)
 
         except Exception as e:
             logger.error(f"Tracker poll failed: {e}", exc_info=True)
@@ -549,6 +551,86 @@ class TrackerService:
             status=status_str,
             flight_data=flight_data,
         )
+
+    async def update_tracker_polling_interval(self, db: AsyncSession = None):
+        """
+        Dynamically adjusts the OpenSky/FR24 polling interval of the APScheduler job
+        based on active flights or manual override.
+        """
+        if db is None:
+            async with async_session() as session:
+                await self._update_tracker_polling_interval_impl(session)
+        else:
+            await self._update_tracker_polling_interval_impl(db)
+
+    async def _update_tracker_polling_interval_impl(self, db: AsyncSession):
+        try:
+            from app.models import Flight, Setting
+            from app.config import settings as app_settings
+            
+            now = datetime.now(timezone.utc)
+            
+            # Fetch all settings
+            res_settings = await db.execute(select(Setting))
+            db_settings = {s.key: s.value for s in res_settings.scalars().all()}
+            
+            airborne_interval = int(db_settings.get('polling_interval_seconds', app_settings.polling_interval_seconds))
+            passive_interval = int(db_settings.get('polling_interval_passive_seconds', 300))
+            passive_interval = max(passive_interval, airborne_interval)
+            
+            manual_airborne = db_settings.get('manual_airborne_mode', 'false') == 'true'
+            manual_set_at_str = db_settings.get('manual_airborne_mode_set_at')
+            
+            # Check for active flights
+            result_active = await db.execute(select(Flight).where(Flight.status == "active"))
+            has_active_flights = result_active.scalars().first() is not None
+            
+            # Handle manual airborne mode timeout (30 minutes)
+            if manual_airborne and not has_active_flights:
+                if manual_set_at_str:
+                    try:
+                        set_at = datetime.fromisoformat(manual_set_at_str)
+                        if set_at.tzinfo is None:
+                            set_at = set_at.replace(tzinfo=timezone.utc)
+                        else:
+                            set_at = set_at.astimezone(timezone.utc)
+                        
+                        if (now - set_at) >= timedelta(minutes=30):
+                            logger.info("30 minutes elapsed in manual airborne mode with no active flights. Reverting to passive mode.")
+                            manual_airborne = False
+                            
+                            # Update setting in DB
+                            res_mode = await db.execute(select(Setting).where(Setting.key == 'manual_airborne_mode'))
+                            mode_setting = res_mode.scalars().first()
+                            if mode_setting:
+                                mode_setting.value = 'false'
+                            else:
+                                db.add(Setting(key='manual_airborne_mode', value='false'))
+                            await db.commit()
+                    except Exception as parse_err:
+                        logger.error(f"Failed to parse manual_airborne_mode_set_at: {parse_err}")
+            
+            is_airborne_mode = has_active_flights or manual_airborne
+            target_interval = airborne_interval if is_airborne_mode else passive_interval
+            
+            # Reschedule the job
+            from app.main import scheduler
+            job = scheduler.get_job("poll_positions")
+            if job:
+                current_interval = job.trigger.interval.total_seconds()
+                if int(current_interval) != target_interval:
+                    scheduler.reschedule_job("poll_positions", trigger="interval", seconds=target_interval)
+                    logger.info(
+                        f"Dynamic Polling Interval Adjustment: Switched to "
+                        f"{'Airborne' if is_airborne_mode else 'Passive'} mode. "
+                        f"Reason: {'Active Flight' if has_active_flights else 'Manual Override' if manual_airborne else 'All Grounded/Timeout'}. "
+                        f"Rescheduled 'poll_positions' from {int(current_interval)}s to {target_interval}s."
+                    )
+            else:
+                logger.warning("Could not find APScheduler job 'poll_positions' to reschedule.")
+                
+        except Exception as e:
+            logger.error(f"Failed to dynamically adjust tracker polling interval: {e}")
 
 
 # Singleton instance
