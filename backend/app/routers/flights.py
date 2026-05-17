@@ -109,6 +109,23 @@ async def add_flight(
     if not aircraft:
         raise HTTPException(status_code=404, detail="Aircraft not found")
 
+    # Deduplication check
+    if flight.flight_number:
+        # Check if there is an active/scheduled flight with the same flight number
+        existing_res = await db.execute(
+            select(Flight).where(
+                Flight.aircraft_id == flight.aircraft_id,
+                Flight.flight_number == flight.flight_number,
+                Flight.status.in_(["scheduled", "active"])
+            )
+        )
+        existing_flight = existing_res.scalars().first()
+        if existing_flight:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"A scheduled or active flight with flight number '{flight.flight_number}' already exists for this aircraft."
+            )
+
     # Try to enrich from FR24
     departure_iata = flight.departure_iata
     departure_name = flight.departure_name

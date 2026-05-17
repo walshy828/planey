@@ -6,7 +6,7 @@ CRUD operations for tracked aircraft.
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -286,18 +286,41 @@ async def sync_aircraft_from_flightaware(
         synced_flights = []
         for f_data in flights_data:
             f_num = f_data["flight_number"]
-            # Check for existing flight
-            existing = await db.execute(
-                select(Flight).where(
-                    Flight.aircraft_id == aircraft.id,
-                    Flight.flight_number == f_num,
-                    Flight.status.in_(["scheduled", "active"])
-                )
-            )
-            flight = existing.scalars().first()
-            
             orig_code = normalize_airport_code(f_data.get("origin_code"))
             dest_code = normalize_airport_code(f_data.get("destination_code"))
+
+            # Build query to search for existing flight
+            # Match either:
+            # 1. Any scheduled or active flight with this flight number
+            # 2. OR a landed flight that matches the departure time window (within 12 hours)
+            dep_time = f_data.get("departure_time")
+            query = select(Flight).where(
+                Flight.aircraft_id == aircraft.id,
+                Flight.flight_number == f_num
+            )
+            
+            if isinstance(dep_time, datetime):
+                # Ensure tz-aware
+                if dep_time.tzinfo is None:
+                    dep_time = dep_time.replace(tzinfo=timezone.utc)
+                else:
+                    dep_time = dep_time.astimezone(timezone.utc)
+                
+                query = query.where(
+                    Flight.status.in_(["scheduled", "active"]) |
+                    (
+                        (Flight.status == "landed") &
+                        (
+                            (Flight.actual_departure.between(dep_time - timedelta(hours=12), dep_time + timedelta(hours=12))) |
+                            (Flight.scheduled_departure.between(dep_time - timedelta(hours=12), dep_time + timedelta(hours=12)))
+                        )
+                    )
+                )
+            else:
+                query = query.where(Flight.status.in_(["scheduled", "active"]))
+
+            existing = await db.execute(query)
+            flight = existing.scalars().first()
 
             if flight:
                 # Update existing flight with more info
@@ -313,7 +336,7 @@ async def sync_aircraft_from_flightaware(
                 
                 # Times
                 if f_data.get("departure_time") and isinstance(f_data["departure_time"], datetime):
-                    if f_data["status"] == "active":
+                    if f_data["status"] in ["active", "landed"]:
                         flight.actual_departure = f_data["departure_time"]
                         logger.info(f"  - Setting actual_departure: {f_data['departure_time']}")
                     else:
@@ -321,9 +344,13 @@ async def sync_aircraft_from_flightaware(
                         logger.info(f"  - Setting scheduled_departure: {f_data['departure_time']}")
                 
                 if f_data.get("arrival_time") and isinstance(f_data["arrival_time"], datetime):
-                    # For active flights, arrival is an estimate
-                    flight.scheduled_arrival = f_data["arrival_time"]
-                    logger.info(f"  - Setting scheduled_arrival: {f_data['arrival_time']}")
+                    if f_data["status"] == "landed":
+                        flight.actual_arrival = f_data["arrival_time"]
+                        logger.info(f"  - Setting actual_arrival: {f_data['arrival_time']}")
+                    else:
+                        # For active/scheduled flights, arrival is an estimate
+                        flight.scheduled_arrival = f_data["arrival_time"]
+                        logger.info(f"  - Setting scheduled_arrival: {f_data['arrival_time']}")
                 
                 flight.status = f_data["status"]
                 updated_count += 1

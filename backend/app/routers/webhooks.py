@@ -59,56 +59,56 @@ async def webhook_flight_filed(
 
     # 2. Deduplication / Update Check
     # Check if we already have a scheduled or active flight for this aircraft within 18 hours
-    if payload.scheduled_departure:
-        existing_res = await db.execute(
-            select(Flight)
-            .where(
-                Flight.aircraft_id == aircraft.id,
-                Flight.status.in_(["scheduled", "active"])
-            )
+    ref_time = payload.scheduled_departure or datetime.now(timezone.utc)
+    existing_res = await db.execute(
+        select(Flight)
+        .where(
+            Flight.aircraft_id == aircraft.id,
+            Flight.status.in_(["scheduled", "active"])
         )
-        for existing in existing_res.scalars().all():
-            # Match condition:
-            # 1. Same departure airport OR existing has no departure airport (dynamically created)
-            # 2. Within 18 hours of scheduled departure
-            is_match = False
-            if existing.departure_iata == payload.departure_iata or existing.departure_iata is None:
-                existing_time = existing.actual_departure or existing.scheduled_departure or existing.created_at
-                if existing_time:
-                    existing_time_naive = existing_time.replace(tzinfo=None)
-                    payload_dep = payload.scheduled_departure.replace(tzinfo=None)
-                    diff = abs((existing_time_naive - payload_dep).total_seconds())
-                    if diff <= 18 * 3600:
-                        is_match = True
+    )
+    for existing in existing_res.scalars().all():
+        # Match condition:
+        # 1. Same departure airport OR existing has no departure airport (dynamically created)
+        # 2. Within 18 hours of scheduled departure
+        is_match = False
+        if existing.departure_iata == payload.departure_iata or existing.departure_iata is None:
+            existing_time = existing.actual_departure or existing.scheduled_departure or existing.created_at
+            if existing_time:
+                existing_time_naive = existing_time.replace(tzinfo=None)
+                ref_time_naive = ref_time.replace(tzinfo=None)
+                diff = abs((existing_time_naive - ref_time_naive).total_seconds())
+                if diff <= 18 * 3600:
+                    is_match = True
 
-            if is_match:
-                logger.info(f"Deduplicated and updating flight plan for {payload.tail_number}. Status: {existing.status}")
-                # Update details in-place
-                existing.flight_number = payload.flight_number or existing.flight_number
-                existing.callsign = payload.callsign or existing.callsign
-                existing.departure_iata = payload.departure_iata or existing.departure_iata
-                existing.arrival_iata = payload.arrival_iata or existing.arrival_iata
-                existing.scheduled_departure = payload.scheduled_departure or existing.scheduled_departure
-                existing.scheduled_arrival = payload.scheduled_arrival or existing.scheduled_arrival
-                existing.expected_route = payload.expected_route or existing.expected_route
+        if is_match:
+            logger.info(f"Deduplicated and updating flight plan for {payload.tail_number}. Status: {existing.status}")
+            # Update details in-place
+            existing.flight_number = payload.flight_number or existing.flight_number
+            existing.callsign = payload.callsign or existing.callsign
+            existing.departure_iata = payload.departure_iata or existing.departure_iata
+            existing.arrival_iata = payload.arrival_iata or existing.arrival_iata
+            existing.scheduled_departure = payload.scheduled_departure or existing.scheduled_departure
+            existing.scheduled_arrival = payload.scheduled_arrival or existing.scheduled_arrival
+            existing.expected_route = payload.expected_route or existing.expected_route
+            
+            # Re-geocode the airports if details changed
+            from app.services.geocoder import geocoder
+            dep_coords = await geocoder.get_airport_coordinates(existing.departure_iata)
+            arr_coords = await geocoder.get_airport_coordinates(existing.arrival_iata)
+            if dep_coords:
+                existing.departure_lat, existing.departure_lon = dep_coords
+            if arr_coords:
+                existing.arrival_lat, existing.arrival_lon = arr_coords
                 
-                # Re-geocode the airports if details changed
-                from app.services.geocoder import geocoder
-                dep_coords = await geocoder.get_airport_coordinates(existing.departure_iata)
-                arr_coords = await geocoder.get_airport_coordinates(existing.arrival_iata)
-                if dep_coords:
-                    existing.departure_lat, existing.departure_lon = dep_coords
-                if arr_coords:
-                    existing.arrival_lat, existing.arrival_lon = arr_coords
-                    
-                await db.commit()
-                await db.refresh(existing)
+            await db.commit()
+            await db.refresh(existing)
 
-                # Retroactively reconcile any captured orphan positions
-                from app.services.reconciliation import reconciliation_service
-                await reconciliation_service.reconcile_orphan_positions(existing, db)
+            # Retroactively reconcile any captured orphan positions
+            from app.services.reconciliation import reconciliation_service
+            await reconciliation_service.reconcile_orphan_positions(existing, db)
 
-                return existing
+            return existing
 
     # 3. Geocode the airports for map plotting
     from app.services.geocoder import geocoder
@@ -170,6 +170,7 @@ async def webhook_flight_departed(
     )
     active_flights = active_res.scalars().all()
     dep_time = payload.actual_departure or datetime.now(timezone.utc)
+    duplicate_flight = None
     for old_flight in active_flights:
         # Check if it's a duplicate webhook (same departure, within 4 hours)
         is_duplicate = False
@@ -179,6 +180,7 @@ async def webhook_flight_departed(
                 dep_time_naive = dep_time.replace(tzinfo=None)
                 if abs((old_dep - dep_time_naive).total_seconds()) < 4 * 3600:
                     is_duplicate = True
+                    duplicate_flight = old_flight
         
         if not is_duplicate:
             logger.info(f"Self-healing: Reconciling and closing previous active flight {old_flight.id} for {aircraft.tail_number}")
@@ -192,6 +194,10 @@ async def webhook_flight_departed(
                 old_flight.status = "landed"
                 old_flight.actual_arrival = dep_time - timedelta(minutes=30)
                 await db.commit()
+
+    if duplicate_flight:
+        logger.info(f"Duplicate departure webhook detected. Returning existing active flight {duplicate_flight.id}.")
+        return duplicate_flight
 
     # 2. Find the scheduled flight
     sched_res = await db.execute(
@@ -339,8 +345,28 @@ async def webhook_flight_arrived(
     )
     flight = flight_res.scalars().first()
 
-    # 3. If no active flight exists, promote a matching scheduled flight (missed departure webhook)
     arr_time = payload.actual_arrival or datetime.now(timezone.utc)
+
+    # Deduplication / Check if already arrived recently (within 4 hours)
+    if not flight:
+        recent_landed_res = await db.execute(
+            select(Flight)
+            .where(
+                Flight.aircraft_id == aircraft.id,
+                Flight.status == "landed"
+            )
+            .order_by(Flight.actual_arrival.desc().nullslast())
+            .limit(1)
+        )
+        recent_landed = recent_landed_res.scalars().first()
+        if recent_landed and recent_landed.actual_arrival:
+            recent_arr = recent_landed.actual_arrival.replace(tzinfo=None)
+            arr_time_naive = arr_time.replace(tzinfo=None)
+            if abs((recent_arr - arr_time_naive).total_seconds()) < 4 * 3600:
+                logger.info(f"Duplicate arrival webhook detected. Returning existing landed flight {recent_landed.id}.")
+                return recent_landed
+
+    # 3. If no active flight exists, promote a matching scheduled flight (missed departure webhook)
     if not flight:
         sched_res = await db.execute(
             select(Flight)
