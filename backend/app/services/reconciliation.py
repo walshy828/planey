@@ -16,6 +16,94 @@ logger = logging.getLogger(__name__)
 class ReconciliationService:
     """Service to automatically close out 'stuck' flights."""
     
+    async def reconcile_orphan_positions(self, flight: Flight, db: AsyncSession) -> int:
+        """
+        Retroactively link orphan positions (flight_id is NULL) to the flight
+        by finding all positions for this aircraft within the flight's timeframe
+        that are not overlapped by any other flight for the same aircraft.
+        """
+        from app.models import Position
+        from sqlalchemy import update
+
+        # 1. Determine baseline timeframe of this flight
+        flight_start = flight.actual_departure or flight.scheduled_departure or flight.created_at
+        flight_end = flight.actual_arrival or flight.scheduled_arrival or datetime.now(timezone.utc)
+
+        # Ensure naive/aware compatibility
+        if flight_start and flight_start.tzinfo is not None:
+            flight_start = flight_start.replace(tzinfo=None)
+        if flight_end and flight_end.tzinfo is not None:
+            flight_end = flight_end.replace(tzinfo=None)
+
+        # 2. Query other flights for the same aircraft to find boundaries
+        flights_res = await db.execute(
+            select(Flight)
+            .where(Flight.aircraft_id == flight.aircraft_id)
+            .order_by(Flight.scheduled_departure.asc().nullslast(), Flight.created_at.asc())
+        )
+        all_flights = flights_res.scalars().all()
+
+        prev_end = None
+        next_start = None
+
+        # Find our index
+        flight_idx = -1
+        for idx, f in enumerate(all_flights):
+            if f.id == flight.id:
+                flight_idx = idx
+                break
+
+        if flight_idx != -1:
+            # Preceding flight (closest index before us)
+            if flight_idx > 0:
+                p_flight = all_flights[flight_idx - 1]
+                p_end = p_flight.actual_arrival or p_flight.scheduled_arrival or p_flight.actual_departure or p_flight.scheduled_departure
+                if p_end:
+                    prev_end = p_end.replace(tzinfo=None) if p_end.tzinfo is not None else p_end
+
+            # Succeeding flight (closest index after us)
+            if flight_idx < len(all_flights) - 1:
+                n_flight = all_flights[flight_idx + 1]
+                n_start = n_flight.actual_departure or n_flight.scheduled_departure or n_flight.created_at
+                if n_start:
+                    next_start = n_start.replace(tzinfo=None) if n_start.tzinfo is not None else n_start
+
+        # 3. Calculate start/end limits with buffers
+        # Preceding flight limit
+        if prev_end:
+            start_limit = max(prev_end, flight_start - timedelta(hours=2))
+        else:
+            start_limit = flight_start - timedelta(hours=12)
+
+        # Succeeding flight limit
+        if next_start:
+            end_limit = min(next_start, flight_end + timedelta(hours=2))
+        else:
+            end_limit = flight_end + timedelta(hours=12)
+
+        logger.info(
+            f"Reconciling positions for flight {flight.id} ({flight.flight_number or flight.callsign}). "
+            f"Time window limits: {start_limit} to {end_limit}"
+        )
+
+        # 4. Perform update
+        q = (
+            update(Position)
+            .where(
+                Position.aircraft_id == flight.aircraft_id,
+                Position.flight_id.is_(None),
+                Position.timestamp >= start_limit,
+                Position.timestamp <= end_limit
+            )
+            .values(flight_id=flight.id)
+        )
+        result = await db.execute(q)
+        rowcount = result.rowcount
+        logger.info(f"Successfully retroactively linked {rowcount} orphan positions to flight {flight.id}")
+        await db.commit()
+        return rowcount
+
+    
     async def reconcile_flight(self, flight_id: str, db: AsyncSession) -> dict:
         """
         Manually reconcile a single flight.

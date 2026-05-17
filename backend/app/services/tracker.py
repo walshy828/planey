@@ -125,14 +125,14 @@ class TrackerService:
                 fr24_pos = await fr24_client.get_position_by_registration(aircraft.tail_number)
                 if fr24_pos:
                     logger.info(f"FR24 found position for {aircraft.tail_number}")
-                    # Find active flight
-                    flight_result = await session.execute(
-                        select(Flight).where(
-                            Flight.aircraft_id == aircraft.id,
-                            Flight.status.in_(["scheduled", "active"])
-                        ).order_by(Flight.scheduled_departure.desc().nullslast()).limit(1)
+                    # Find or dynamically create active flight
+                    flight = await self._get_or_create_active_flight(
+                        aircraft,
+                        fr24_pos["on_ground"],
+                        fr24_pos.get("callsign") or fr24_pos.get("flight_number"),
+                        fr24_pos["timestamp"],
+                        session
                     )
-                    flight = flight_result.scalars().first()
 
                     # Create position record
                     new_pos = Position(
@@ -176,14 +176,14 @@ class TrackerService:
 
     async def _process_state_vector(self, sv, aircraft, session):
         """Internal helper to process a single state vector and save to DB."""
-        # Find active flight
-        flight_result = await session.execute(
-            select(Flight).where(
-                Flight.aircraft_id == aircraft.id,
-                Flight.status.in_(["scheduled", "active"])
-            ).order_by(Flight.scheduled_departure.desc().nullslast()).limit(1)
+        # Find or dynamically create active flight
+        flight = await self._get_or_create_active_flight(
+            aircraft,
+            sv.on_ground,
+            sv.callsign,
+            sv.timestamp,
+            session
         )
-        flight = flight_result.scalars().first()
 
         # Update flight status if airborne
         if flight and not sv.on_ground and flight.status == "scheduled":
@@ -321,8 +321,14 @@ class TrackerService:
                     if not aircraft:
                         continue
 
-                    # Find active flight for this aircraft
-                    active_flight = await self._get_active_flight(aircraft.id, session)
+                    # Find or dynamically create active flight for this aircraft
+                    active_flight = await self._get_or_create_active_flight(
+                        aircraft,
+                        sv.on_ground,
+                        sv.callsign,
+                        sv.timestamp,
+                        session
+                    )
 
                     # Store position
                     position = Position(
@@ -357,6 +363,49 @@ class TrackerService:
 
         except Exception as e:
             logger.error(f"Tracker poll failed: {e}", exc_info=True)
+
+    async def _get_or_create_active_flight(
+        self,
+        aircraft: Aircraft,
+        is_on_ground: bool,
+        callsign: Optional[str],
+        timestamp: datetime,
+        session: AsyncSession
+    ) -> Optional[Flight]:
+        """
+        Retrieves the active/scheduled flight. If none exists and the aircraft
+        is airborne, dynamically creates a new active flight and runs position reconciliation.
+        """
+        flight = await self._get_active_flight(aircraft.id, session)
+        if flight:
+            return flight
+
+        if not is_on_ground:
+            flight_num = callsign.strip() if callsign else aircraft.tail_number
+            logger.info(f"Airborne telemetry detected for {aircraft.tail_number} with no active flight. Auto-creating active flight {flight_num}.")
+            
+            # Ensure naive datetime for DB consistency
+            ts_naive = timestamp.replace(tzinfo=None) if timestamp.tzinfo else timestamp
+
+            new_flight = Flight(
+                aircraft_id=aircraft.id,
+                flight_number=flight_num,
+                callsign=flight_num,
+                status="active",
+                actual_departure=ts_naive
+            )
+            session.add(new_flight)
+            await session.flush() # Populate the ID
+            
+            try:
+                from app.services.reconciliation import reconciliation_service
+                await reconciliation_service.reconcile_orphan_positions(new_flight, session)
+            except Exception as e:
+                logger.error(f"Failed to reconcile orphan positions for auto-created flight: {e}")
+                
+            return new_flight
+
+        return None
 
     async def _get_active_flight(self, aircraft_id, session: AsyncSession) -> Optional[Flight]:
         """Get the currently active or most recent scheduled flight for an aircraft."""

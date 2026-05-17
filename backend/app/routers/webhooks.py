@@ -58,43 +58,57 @@ async def webhook_flight_filed(
     payload.arrival_iata = normalize_airport_code(payload.arrival_iata)
 
     # 2. Deduplication / Update Check
-    # Check if we already have a scheduled flight for this aircraft with the same route/day (within 18 hours)
-    if payload.scheduled_departure and payload.departure_iata:
+    # Check if we already have a scheduled or active flight for this aircraft within 18 hours
+    if payload.scheduled_departure:
         existing_res = await db.execute(
             select(Flight)
             .where(
                 Flight.aircraft_id == aircraft.id,
-                Flight.status == "scheduled",
-                Flight.departure_iata == payload.departure_iata
+                Flight.status.in_(["scheduled", "active"])
             )
         )
         for existing in existing_res.scalars().all():
-            if existing.scheduled_departure:
-                existing_dep = existing.scheduled_departure.replace(tzinfo=None)
-                payload_dep = payload.scheduled_departure.replace(tzinfo=None)
-                diff = abs((existing_dep - payload_dep).total_seconds())
-                if diff <= 18 * 3600:
-                    logger.info(f"Deduplicated and updating flight plan for {payload.tail_number}. Flight already exists.")
-                    # Update flight plan details in-place
-                    existing.flight_number = payload.flight_number or existing.flight_number
-                    existing.callsign = payload.callsign or existing.callsign
-                    existing.arrival_iata = payload.arrival_iata or existing.arrival_iata
-                    existing.scheduled_departure = payload.scheduled_departure or existing.scheduled_departure
-                    existing.scheduled_arrival = payload.scheduled_arrival or existing.scheduled_arrival
-                    existing.expected_route = payload.expected_route or existing.expected_route
+            # Match condition:
+            # 1. Same departure airport OR existing has no departure airport (dynamically created)
+            # 2. Within 18 hours of scheduled departure
+            is_match = False
+            if existing.departure_iata == payload.departure_iata or existing.departure_iata is None:
+                existing_time = existing.actual_departure or existing.scheduled_departure or existing.created_at
+                if existing_time:
+                    existing_time_naive = existing_time.replace(tzinfo=None)
+                    payload_dep = payload.scheduled_departure.replace(tzinfo=None)
+                    diff = abs((existing_time_naive - payload_dep).total_seconds())
+                    if diff <= 18 * 3600:
+                        is_match = True
+
+            if is_match:
+                logger.info(f"Deduplicated and updating flight plan for {payload.tail_number}. Status: {existing.status}")
+                # Update details in-place
+                existing.flight_number = payload.flight_number or existing.flight_number
+                existing.callsign = payload.callsign or existing.callsign
+                existing.departure_iata = payload.departure_iata or existing.departure_iata
+                existing.arrival_iata = payload.arrival_iata or existing.arrival_iata
+                existing.scheduled_departure = payload.scheduled_departure or existing.scheduled_departure
+                existing.scheduled_arrival = payload.scheduled_arrival or existing.scheduled_arrival
+                existing.expected_route = payload.expected_route or existing.expected_route
+                
+                # Re-geocode the airports if details changed
+                from app.services.geocoder import geocoder
+                dep_coords = await geocoder.get_airport_coordinates(existing.departure_iata)
+                arr_coords = await geocoder.get_airport_coordinates(existing.arrival_iata)
+                if dep_coords:
+                    existing.departure_lat, existing.departure_lon = dep_coords
+                if arr_coords:
+                    existing.arrival_lat, existing.arrival_lon = arr_coords
                     
-                    # Re-geocode the airports if details changed
-                    from app.services.geocoder import geocoder
-                    dep_coords = await geocoder.get_airport_coordinates(payload.departure_iata)
-                    arr_coords = await geocoder.get_airport_coordinates(payload.arrival_iata)
-                    if dep_coords:
-                        existing.departure_lat, existing.departure_lon = dep_coords
-                    if arr_coords:
-                        existing.arrival_lat, existing.arrival_lon = arr_coords
-                        
-                    await db.commit()
-                    await db.refresh(existing)
-                    return existing
+                await db.commit()
+                await db.refresh(existing)
+
+                # Retroactively reconcile any captured orphan positions
+                from app.services.reconciliation import reconciliation_service
+                await reconciliation_service.reconcile_orphan_positions(existing, db)
+
+                return existing
 
     # 3. Geocode the airports for map plotting
     from app.services.geocoder import geocoder
@@ -121,6 +135,10 @@ async def webhook_flight_filed(
     await db.commit()
     await db.refresh(new_flight)
     
+    # Retroactively reconcile any captured orphan positions
+    from app.services.reconciliation import reconciliation_service
+    await reconciliation_service.reconcile_orphan_positions(new_flight, db)
+
     logger.info(f"Created new scheduled flight for {payload.tail_number} from webhook.")
     return new_flight
 
@@ -278,6 +296,10 @@ async def webhook_flight_departed(
         position_data={"on_ground": False}
     )
 
+    # Retroactively reconcile any captured orphan positions
+    from app.services.reconciliation import reconciliation_service
+    await reconciliation_service.reconcile_orphan_positions(flight, db)
+
     return flight
 
 
@@ -396,6 +418,10 @@ async def webhook_flight_arrived(
 
     await db.commit()
     await db.refresh(flight)
+
+    # Retroactively reconcile any captured orphan positions
+    from app.services.reconciliation import reconciliation_service
+    await reconciliation_service.reconcile_orphan_positions(flight, db)
 
     logger.info(f"Flight {flight.id} for {payload.tail_number} marked as LANDED from webhook.")
 

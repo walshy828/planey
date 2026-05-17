@@ -279,8 +279,11 @@ async def sync_aircraft_from_flightaware(
         if not flights_data:
             return {"status": "success", "message": "No upcoming flights found", "count": 0}
 
+        from app.routers.webhooks import normalize_airport_code
+
         added_count = 0
         updated_count = 0
+        synced_flights = []
         for f_data in flights_data:
             f_num = f_data["flight_number"]
             # Check for existing flight
@@ -293,6 +296,9 @@ async def sync_aircraft_from_flightaware(
             )
             flight = existing.scalars().first()
             
+            orig_code = normalize_airport_code(f_data.get("origin_code"))
+            dest_code = normalize_airport_code(f_data.get("destination_code"))
+
             if flight:
                 # Update existing flight with more info
                 logger.info(f"Updating existing flight {f_num} with new data from FA")
@@ -302,8 +308,8 @@ async def sync_aircraft_from_flightaware(
                 if f_data.get("destination_name"): 
                     flight.arrival_name = f_data["destination_name"]
                     logger.info(f"  - Setting arrival_name: {f_data['destination_name']}")
-                if f_data.get("origin_code"): flight.departure_iata = f_data["origin_code"]
-                if f_data.get("destination_code"): flight.arrival_iata = f_data["destination_code"]
+                if orig_code: flight.departure_iata = orig_code
+                if dest_code: flight.arrival_iata = dest_code
                 
                 # Times
                 if f_data.get("departure_time") and isinstance(f_data["departure_time"], datetime):
@@ -321,15 +327,16 @@ async def sync_aircraft_from_flightaware(
                 
                 flight.status = f_data["status"]
                 updated_count += 1
+                synced_flights.append(flight)
                 continue
 
             # Add new flight
             new_f = Flight(
                 aircraft_id=aircraft.id,
                 flight_number=f_num,
-                departure_iata=f_data.get("origin_code"),
+                departure_iata=orig_code,
                 departure_name=f_data.get("origin_name"),
-                arrival_iata=f_data.get("destination_code"),
+                arrival_iata=dest_code,
                 arrival_name=f_data.get("destination_name"),
                 status=f_data["status"],
                 scheduled_departure=f_data["departure_time"] if isinstance(f_data.get("departure_time"), datetime) and f_data["status"] != "active" else None,
@@ -338,9 +345,19 @@ async def sync_aircraft_from_flightaware(
             )
             db.add(new_f)
             added_count += 1
+            synced_flights.append(new_f)
             logger.info(f"Added flight {f_num} via manual FA sync")
 
         await db.commit()
+
+        # Retroactively reconcile orphan positions for all added/updated flights
+        from app.services.reconciliation import reconciliation_service
+        for synced_flight in synced_flights:
+            try:
+                await db.refresh(synced_flight)
+                await reconciliation_service.reconcile_orphan_positions(synced_flight, db)
+            except Exception as re_err:
+                logger.error(f"Failed to reconcile positions for flight {synced_flight.id} on FA sync: {re_err}")
         return {
             "status": "success",
             "message": f"Synced {added_count} new flights",
