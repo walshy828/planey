@@ -880,9 +880,9 @@ const Flights = {
         }
 
         // Determine how to pass location to OpenSky
-        let openskyUrl = 'https://opensky-network.org/network/explorer';
+        let openskyUrl = 'https://map.opensky-network.org/';
         if (pos && pos.latitude && pos.longitude) {
-            openskyUrl += `?lat=${pos.latitude}&lon=${pos.longitude}&z=10#lat=${pos.latitude}&lon=${pos.longitude}&zoom=10`;
+            openskyUrl += `?lat=${pos.latitude}&lon=${pos.longitude}&zoom=10#lat=${pos.latitude}&lon=${pos.longitude}&zoom=10`;
         }
 
         html += `
