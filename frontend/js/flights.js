@@ -337,15 +337,9 @@ const Flights = {
                             History
                         </button>
                     </div>
-                    <div class="icon-toolbar">
-                        <button class="btn-icon-small btn-sync-fa" data-id="${ac.id}" title="Sync schedules from FlightAware">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-                        </button>
-                        <button class="btn-icon-small btn-edit-aircraft" data-id="${ac.id}" title="Edit Aircraft">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
-                        </button>
-                        <button class="btn-icon-small btn-delete-aircraft delete-icon" data-id="${ac.id}" data-tail="${ac.tail_number}" title="Remove Aircraft">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                    <div class="card-options-container">
+                        <button class="btn-icon-small btn-aircraft-menu" data-id="${ac.id}" title="Aircraft Options">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1.5"></circle><circle cx="12" cy="5" r="1.5"></circle><circle cx="12" cy="19" r="1.5"></circle></svg>
                         </button>
                     </div>
                 </div>
@@ -402,17 +396,10 @@ const Flights = {
             });
         });
         
-        list.querySelectorAll('.btn-edit-aircraft').forEach(btn => {
+        list.querySelectorAll('.btn-aircraft-menu').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                this._showEditAircraftModal(btn.dataset.id);
-            });
-        });
-
-        list.querySelectorAll('.btn-sync-fa').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this._syncAircraftFA(btn.dataset.id, btn);
+                this._showAircraftMenu(btn.dataset.id, btn);
             });
         });
 
@@ -434,13 +421,6 @@ const Flights = {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 Timeline.showHistory(btn.dataset.id, btn.dataset.tail, 24);
-            });
-        });
-
-        list.querySelectorAll('.btn-delete-aircraft').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this._deleteAircraft(btn.dataset.id, btn.dataset.tail);
             });
         });
     },
@@ -848,6 +828,144 @@ const Flights = {
             Utils.toast(`${tail} removed`, 'success');
             await this.loadAircraft();
         } catch (err) { Utils.toast(err.message, 'error'); }
+    },
+
+    _showAircraftMenu(id, triggerBtn) {
+        // Remove any existing dropdowns first
+        const existing = document.getElementById('aircraft-context-menu');
+        if (existing) {
+            existing.remove();
+        }
+
+        const ac = this.aircraft.find(a => a.id === id);
+        if (!ac) return;
+
+        const pos = ac.latest_position;
+        const flight = ac.active_flight;
+
+        // Create the dropdown container
+        const menu = document.createElement('div');
+        menu.id = 'aircraft-context-menu';
+        menu.className = 'aircraft-dropdown-menu';
+
+        // Add options HTML
+        let html = `
+            <div class="dropdown-item btn-sync-fa" data-id="${ac.id}">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                Sync FlightAware schedules
+            </div>
+            <div class="dropdown-item btn-edit-aircraft" data-id="${ac.id}">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                Edit Aircraft Details
+            </div>
+            <div class="dropdown-item btn-delete-aircraft delete-icon" data-id="${ac.id}" data-tail="${ac.tail_number}">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                Remove Aircraft
+            </div>
+            <div class="dropdown-divider"></div>
+            <div class="dropdown-header">External Tracking</div>
+            <a class="dropdown-item external-link" href="https://www.flightaware.com/live/flight/${ac.tail_number}" target="_blank" rel="noopener noreferrer">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+                FlightAware Live
+            </a>
+        `;
+
+        if (ac.icao24_hex) {
+            html += `
+            <a class="dropdown-item external-link" href="https://globe.adsbexchange.com/?icao=${ac.icao24_hex.toUpperCase()}" target="_blank" rel="noopener noreferrer">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"></circle><circle cx="12" cy="12" r="10"></circle><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path><path d="M2 12h20"></path></svg>
+                ADS-B Exchange
+            </a>
+            `;
+        }
+
+        // Determine how to pass location to OpenSky
+        let openskyUrl = 'https://opensky-network.org/network/explorer';
+        if (pos && pos.latitude && pos.longitude) {
+            openskyUrl += `?lat=${pos.latitude}&lon=${pos.longitude}&z=10#lat=${pos.latitude}&lon=${pos.longitude}&zoom=10`;
+        }
+
+        html += `
+            <a class="dropdown-item external-link" href="${openskyUrl}" target="_blank" rel="noopener noreferrer">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path></svg>
+                OpenSky Network Map
+            </a>
+        `;
+
+        if (flight && (flight.arrival_icao || flight.arrival_iata)) {
+            const code = (flight.arrival_icao || flight.arrival_iata).toUpperCase();
+            html += `
+            <div class="dropdown-divider"></div>
+            <div class="dropdown-header">Radio / ATC</div>
+            <a class="dropdown-item external-link" href="https://www.liveatc.net/search/?icao=${code}" target="_blank" rel="noopener noreferrer">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
+                LiveATC - ${code} Tower
+            </a>
+            `;
+        }
+
+        menu.innerHTML = html;
+        document.body.appendChild(menu);
+
+        // Bind inner actions
+        menu.querySelector('.btn-sync-fa').addEventListener('click', (e) => {
+            e.stopPropagation();
+            menu.remove();
+            this._syncAircraftFA(id);
+        });
+
+        menu.querySelector('.btn-edit-aircraft').addEventListener('click', (e) => {
+            e.stopPropagation();
+            menu.remove();
+            this._showEditAircraftModal(id);
+        });
+
+        menu.querySelector('.btn-delete-aircraft').addEventListener('click', (e) => {
+            e.stopPropagation();
+            menu.remove();
+            this._deleteAircraft(id, ac.tail_number);
+        });
+
+        // Close menu on click of any external link
+        menu.querySelectorAll('.external-link').forEach(link => {
+            link.addEventListener('click', () => {
+                menu.remove();
+            });
+        });
+
+        // Positioning logic
+        const rect = triggerBtn.getBoundingClientRect();
+        const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+        const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
+
+        // Position it absolute relative to the body
+        let top = rect.bottom + scrollTop + 6;
+        let left = rect.right + scrollLeft - menu.offsetWidth;
+
+        // Check if menu goes off screen bounds
+        if (left < 10) left = 10;
+        if (top + menu.offsetHeight > window.innerHeight + scrollTop) {
+            top = rect.top + scrollTop - menu.offsetHeight - 6;
+        }
+
+        menu.style.top = `${top}px`;
+        menu.style.left = `${left}px`;
+
+        // Animation entry
+        requestAnimationFrame(() => {
+            menu.classList.add('show');
+        });
+
+        // Global outside click listener
+        const closeMenu = (e) => {
+            if (!menu.contains(e.target) && e.target !== triggerBtn && !triggerBtn.contains(e.target)) {
+                menu.remove();
+                document.removeEventListener('click', closeMenu);
+            }
+        };
+        setTimeout(() => {
+            document.addEventListener('click', closeMenu);
+        }, 50);
     },
 
     // ── WebSocket Handler ──

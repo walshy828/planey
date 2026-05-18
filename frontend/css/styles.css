@@ -716,3 +716,83 @@ input:checked + .slider:before {
 .slider.round:before {
     border-radius: 50%;
 }
+
+/* --- Aircraft Options Dropdown Menu --- */
+.aircraft-dropdown-menu {
+    position: absolute;
+    z-index: 2500;
+    min-width: 220px;
+    background: var(--bg-glass);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+    padding: 6px 0;
+    opacity: 0;
+    transform: scale(0.95) translateY(-4px);
+    transform-origin: top right;
+    transition: opacity 0.15s ease, transform 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+    pointer-events: none;
+}
+
+.aircraft-dropdown-menu.show {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+    pointer-events: auto;
+}
+
+.aircraft-dropdown-menu .dropdown-header {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    padding: 8px 12px 4px 12px;
+}
+
+.aircraft-dropdown-menu .dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    color: var(--text-secondary);
+    font-size: 12.5px;
+    font-weight: 500;
+    text-decoration: none;
+    cursor: pointer;
+    transition: all var(--transition);
+}
+
+.aircraft-dropdown-menu .dropdown-item svg {
+    color: var(--text-muted);
+    transition: color var(--transition);
+}
+
+.aircraft-dropdown-menu .dropdown-item:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-primary);
+}
+
+.aircraft-dropdown-menu .dropdown-item:hover svg {
+    color: var(--accent);
+}
+
+.aircraft-dropdown-menu .dropdown-item.delete-icon {
+    color: var(--text-secondary);
+}
+
+.aircraft-dropdown-menu .dropdown-item.delete-icon:hover {
+    background: rgba(244, 67, 54, 0.1);
+    color: var(--red);
+}
+
+.aircraft-dropdown-menu .dropdown-item.delete-icon:hover svg {
+    color: var(--red);
+}
+
+.aircraft-dropdown-menu .dropdown-divider {
+    height: 1px;
+    background: var(--border-color);
+    margin: 6px 0;
+}
+
