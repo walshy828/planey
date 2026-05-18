@@ -461,6 +461,14 @@ class TrackerService:
                 flight.actual_arrival = datetime.now(timezone.utc)
                 logger.info(f"Flight {flight.flight_number} has landed")
 
+                # Proactively calculate flight summary statistics upon landing
+                try:
+                    from app.services.stats_calculator import calculate_flight_stats
+                    flight.summary_stats = await calculate_flight_stats(flight, session)
+                    logger.info(f"Proactively calculated statistics for landed flight {flight.flight_number}: {flight.summary_stats}")
+                except Exception as e:
+                    logger.error(f"Failed to calculate statistics during live tracking landing: {e}")
+
                 # Broadcast status change
                 await ws_manager.broadcast({
                     "type": "flight_status",
@@ -468,6 +476,7 @@ class TrackerService:
                     "aircraft_id": str(flight.aircraft_id),
                     "old_status": old_status,
                     "new_status": "landed",
+                    "summary_stats": flight.summary_stats,
                 })
         else:
             if old_status == "scheduled":

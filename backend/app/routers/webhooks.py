@@ -193,6 +193,13 @@ async def webhook_flight_departed(
                 # Fallback: force land it manually
                 old_flight.status = "landed"
                 old_flight.actual_arrival = dep_time - timedelta(minutes=30)
+                # Proactively calculate flight summary statistics upon landing
+                try:
+                    from app.services.stats_calculator import calculate_flight_stats
+                    old_flight.summary_stats = await calculate_flight_stats(old_flight, db)
+                    logger.info(f"Self-healed flight statistics: {old_flight.summary_stats}")
+                except Exception as e:
+                    logger.error(f"Failed to calculate statistics during departure self-healing: {e}")
                 await db.commit()
 
     if duplicate_flight:
@@ -457,6 +464,14 @@ async def webhook_flight_arrived(
             location_name=flight.arrival_name or flight.arrival_iata
         )
         db.add(new_pos)
+
+    # Proactively calculate flight summary statistics upon landing
+    try:
+        from app.services.stats_calculator import calculate_flight_stats
+        flight.summary_stats = await calculate_flight_stats(flight, db)
+        logger.info(f"Arrived webhook flight statistics: {flight.summary_stats}")
+    except Exception as e:
+        logger.error(f"Failed to calculate statistics inside arrival webhook: {e}")
 
     await db.commit()
     await db.refresh(flight)

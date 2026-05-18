@@ -137,6 +137,7 @@ class Flight(Base):
     gate_info: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     raw_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     expected_route: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary_stats: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow

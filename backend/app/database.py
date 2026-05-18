@@ -6,6 +6,7 @@ Async SQLAlchemy engine and session management for PostgreSQL.
 
 import asyncio
 import logging
+from sqlalchemy import text, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -58,6 +59,8 @@ async def init_db():
             logger.info(f"Connecting to database (attempt {attempt}/{max_retries})...")
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
+                # Self-healing database upgrade to add summary_stats column if missing
+                await conn.execute(text("ALTER TABLE flights ADD COLUMN IF NOT EXISTS summary_stats JSONB;"))
             logger.info("Database initialized successfully")
             return
         except Exception as e:

@@ -50,6 +50,16 @@ async def list_flights(
 
     result = await db.execute(query)
     flights = result.scalars().all()
+    
+    # Retroactively compute statistics for landed flights that lack them
+    from app.services.stats_calculator import update_flight_stats_if_needed
+    updated = False
+    for f in flights:
+        if await update_flight_stats_if_needed(f, db):
+            updated = True
+    if updated:
+        await db.commit()
+
     return [FlightResponse.model_validate(f) for f in flights]
 
 
@@ -195,6 +205,12 @@ async def get_flight(
     flight = result.scalars().first()
     if not flight:
         raise HTTPException(status_code=404, detail="Flight not found")
+
+    # Retroactively compute statistics if needed
+    from app.services.stats_calculator import update_flight_stats_if_needed
+    if await update_flight_stats_if_needed(flight, db):
+        await db.commit()
+        await db.refresh(flight)
 
     # Get aircraft
     ac_result = await db.execute(

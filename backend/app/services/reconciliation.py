@@ -296,6 +296,15 @@ class ReconciliationService:
             # 6. Notify Home Assistant
             await self._notify_ha(aircraft, flight)
             
+            # Proactively calculate flight summary statistics upon landing
+            if flight.status == "landed":
+                try:
+                    from app.services.stats_calculator import calculate_flight_stats
+                    flight.summary_stats = await calculate_flight_stats(flight, db)
+                    logger.info(f"Calculated flight statistics during reconciliation: {flight.summary_stats}")
+                except Exception as e:
+                    logger.error(f"Failed to calculate stats during reconciliation: {e}")
+            
             await db.commit()
             return {"status": "success", "message": "Flight reconciled and closed"}
             

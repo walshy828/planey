@@ -571,6 +571,66 @@ const Flights = {
         for (const f of flights) {
             const card = document.createElement('div');
             card.className = 'flight-card';
+            
+            // Format pilot-centric telemetry summary stats HUD if present
+            let statsHtml = '';
+            if (f.summary_stats) {
+                const s = f.summary_stats;
+                
+                // Format duration: e.g., 2h 15m
+                let durationStr = '—';
+                if (s.duration_seconds > 0) {
+                    const hrs = Math.floor(s.duration_seconds / 3600);
+                    const mins = Math.floor((s.duration_seconds % 3600) / 60);
+                    durationStr = hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
+                }
+                
+                // Format distance: primary NM, secondary mi
+                const distNm = s.distance_nm != null ? `${s.distance_nm.toFixed(1)} NM` : '—';
+                const distSm = s.distance_sm != null ? `${s.distance_sm.toFixed(1)} mi` : '—';
+                
+                // Format ground speed: primary kts, secondary mph
+                const speedKts = s.avg_ground_speed_kts != null ? `${Math.round(s.avg_ground_speed_kts)} kts` : '—';
+                const speedMph = s.avg_ground_speed_kts != null ? `${Math.round(s.avg_ground_speed_kts * 1.15078)} mph` : '—';
+                
+                // Format max altitude: primary Flight Level FLxxx if >= 18000ft, secondary ft
+                let altStr = '—';
+                let altSecondary = '';
+                if (s.max_altitude_ft != null && s.max_altitude_ft > 0) {
+                    if (s.max_altitude_ft >= 18000) {
+                        const fl = Math.round(s.max_altitude_ft / 100);
+                        altStr = `FL${fl}`;
+                        altSecondary = `${s.max_altitude_ft.toLocaleString()} ft`;
+                    } else {
+                        altStr = `${s.max_altitude_ft.toLocaleString()} ft`;
+                    }
+                }
+                
+                statsHtml = `
+                    <div class="flight-stats-summary-grid">
+                        <div class="stat-box">
+                            <div class="stat-label">Duration</div>
+                            <div class="stat-value">${durationStr}</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-label">Distance</div>
+                            <div class="stat-value">${distNm}</div>
+                            <span class="stat-unit-secondary">${distSm}</span>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-label">Avg Speed</div>
+                            <div class="stat-value">${speedKts}</div>
+                            <span class="stat-unit-secondary">${speedMph}</span>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-label">Max Alt</div>
+                            <div class="stat-value">${altStr}</div>
+                            ${altSecondary ? `<span class="stat-unit-secondary">${altSecondary}</span>` : ''}
+                        </div>
+                    </div>
+                `;
+            }
+
             card.innerHTML = `
                 <div style="display:flex;justify-content:space-between;align-items:flex-start">
                     <div class="flight-number">${f.flight_number || 'Unknown'}</div>
@@ -584,6 +644,7 @@ const Flights = {
                 <div class="flight-meta">
                     <span>${Utils.formatDateTime(f.actual_departure || f.scheduled_departure)}</span>
                 </div>
+                ${statsHtml}
             `;
             card.addEventListener('click', () => {
                 Timeline.showFlight(f.id, f.aircraft_id, `${f.flight_number || ''} ${f.departure_iata}→${f.arrival_iata}`);

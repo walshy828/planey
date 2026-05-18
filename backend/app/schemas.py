@@ -116,6 +116,7 @@ class FlightResponse(BaseModel):
     actual_arrival: Optional[datetime] = None
     status: str
     gate_info: Optional[dict] = None
+    summary_stats: Optional[dict] = None
     created_at: datetime
     updated_at: datetime
 
