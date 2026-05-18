@@ -55,6 +55,19 @@
                     <span class="status-value" id="stat-positions">0</span>
                 </div>
                 <div class="status-divider"></div>
+                <div class="status-item" id="status-tracker" title="Current tracking mode and update interval">
+                    <span class="status-label">Tracker</span>
+                    <span class="status-value" id="stat-tracker-mode" style="display: flex; align-items: center; gap: 6px; font-size: 13.5px;">
+                        <span class="status-dot passive" id="tracker-dot" style="margin: 0;"></span>
+                        <span id="tracker-mode-text">Passive (300s)</span>
+                    </span>
+                </div>
+                <div class="status-divider"></div>
+                <div class="status-item" id="status-last-poll" title="Time elapsed since the last telemetry poll">
+                    <span class="status-label">Last Poll</span>
+                    <span class="status-value" id="stat-last-poll-time">Never</span>
+                </div>
+                <div class="status-divider"></div>
                 <div class="status-item" id="status-ws">
                     <span class="status-dot disconnected" id="ws-dot"></span>
                     <span class="status-label" id="ws-label">Disconnected</span>

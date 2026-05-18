@@ -32,6 +32,25 @@ logger = logging.getLogger(__name__)
 class TrackerService:
     """Main tracking orchestrator."""
 
+    def __init__(self):
+        self.last_poll_time = None
+        self.last_poll_status = "never"
+        self.is_airborne_mode = False
+        self.current_interval = 300
+
+    async def _broadcast_tracker_status(self):
+        try:
+            last_poll_iso = self.last_poll_time.isoformat() if self.last_poll_time else None
+            await ws_manager.broadcast({
+                "type": "tracker_status",
+                "last_poll_time": last_poll_iso,
+                "last_poll_status": self.last_poll_status,
+                "is_airborne_mode": self.is_airborne_mode,
+                "current_interval": self.current_interval,
+            })
+        except Exception as ws_err:
+            logger.warning(f"Failed to broadcast tracker status via WS: {ws_err}")
+
     async def sync_flight_schedules(self):
         """
         Background job to sync flight schedules for all active aircraft.
@@ -243,6 +262,10 @@ class TrackerService:
         3. Store positions, update flights, broadcast, sync HA
         """
         try:
+            self.last_poll_time = datetime.now(timezone.utc)
+            self.last_poll_status = "polling"
+            await self._broadcast_tracker_status()
+
             async with async_session() as session:
                 # Get all active aircraft with ICAO24 addresses
                 result = await session.execute(
@@ -255,6 +278,8 @@ class TrackerService:
 
                 if not aircraft_list:
                     logger.debug("No active aircraft with ICAO24 to track")
+                    self.last_poll_status = "no_aircraft"
+                    await self._broadcast_tracker_status()
                     return
 
                 # Build ICAO24 → Aircraft mapping
@@ -310,10 +335,12 @@ class TrackerService:
 
                 if not state_vectors:
                     logger.debug("No positions returned from OpenSky or FR24")
+                    self.last_poll_status = "no_data"
                     # Still update HA for aircraft we're tracking but have no data for
                     for aircraft in aircraft_list:
                         await self._update_ha_no_position(aircraft, session)
                     await self.update_tracker_polling_interval(session)
+                    await self._broadcast_tracker_status()
                     return
 
                 # Process each state vector
@@ -361,10 +388,14 @@ class TrackerService:
 
                 await session.commit()
                 logger.info(f"Stored {len(state_vectors)} positions")
+                self.last_poll_status = "success"
                 await self.update_tracker_polling_interval(session)
+                await self._broadcast_tracker_status()
 
         except Exception as e:
             logger.error(f"Tracker poll failed: {e}", exc_info=True)
+            self.last_poll_status = "error"
+            await self._broadcast_tracker_status()
 
     async def _get_or_create_active_flight(
         self,
@@ -612,6 +643,10 @@ class TrackerService:
             
             is_airborne_mode = has_active_flights or manual_airborne
             target_interval = airborne_interval if is_airborne_mode else passive_interval
+            
+            self.is_airborne_mode = is_airborne_mode
+            self.current_interval = target_interval
+            await self._broadcast_tracker_status()
             
             # Reschedule the job
             from app.main import scheduler

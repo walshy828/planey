@@ -83,6 +83,8 @@ async def lifespan(app: FastAPI):
         
         is_airborne_mode = has_active or manual_airborne
         target_interval = poll_interval if is_airborne_mode else passive_interval
+        tracker_service.is_airborne_mode = is_airborne_mode
+        tracker_service.current_interval = target_interval
         logger.info(f"Startup polling mode: {'Airborne' if is_airborne_mode else 'Passive'} (interval={target_interval}s)")
 
     # Schedule tracking poll
@@ -242,12 +244,19 @@ async def get_stats():
             select(func.count(Flight.id))
         )
 
+        last_poll_iso = tracker_service.last_poll_time.isoformat() if tracker_service.last_poll_time else None
         return {
             "active_aircraft": ac_count.scalar() or 0,
             "active_flights": flight_count.scalar() or 0,
             "total_positions": pos_count.scalar() or 0,
             "total_flights": total_flights.scalar() or 0,
             "websocket_connections": ws_manager.connection_count,
+            "tracker": {
+                "last_poll_time": last_poll_iso,
+                "last_poll_status": tracker_service.last_poll_status,
+                "is_airborne_mode": tracker_service.is_airborne_mode,
+                "current_interval": tracker_service.current_interval,
+            }
         }
 
 # Mount static frontend files at the very end

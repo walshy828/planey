@@ -185,7 +185,59 @@ const Flights = {
             document.getElementById('stat-aircraft-count').textContent = stats.active_aircraft || 0;
             document.getElementById('stat-active-flights').textContent = stats.active_flights || 0;
             document.getElementById('stat-positions').textContent = (stats.total_positions || 0).toLocaleString();
+            
+            if (stats.tracker) {
+                this._updateTrackerUI(stats.tracker);
+            }
         } catch (err) { console.error(err); }
+    },
+
+    _updateTrackerUI(data) {
+        if (!data) return;
+        
+        const dot = document.getElementById('tracker-dot');
+        const text = document.getElementById('tracker-mode-text');
+        const timeVal = document.getElementById('stat-last-poll-time');
+        
+        if (dot && text) {
+            let dotClass = 'status-dot';
+            if (data.last_poll_status === 'error') {
+                dotClass += ' error';
+            } else if (data.last_poll_status === 'polling') {
+                dotClass += ' polling';
+            } else if (data.is_airborne_mode) {
+                dotClass += ' airborne';
+            } else {
+                dotClass += ' passive';
+            }
+            dot.className = dotClass;
+            
+            const mode = data.is_airborne_mode ? 'Airborne' : 'Passive';
+            const interval = data.current_interval || 300;
+            text.textContent = `${mode} (${interval}s)`;
+            
+            let statusDesc = 'Tracker: IDLE';
+            if (data.last_poll_status === 'success') statusDesc = 'Tracker: Last poll successful';
+            else if (data.last_poll_status === 'polling') statusDesc = 'Tracker: Polling now...';
+            else if (data.last_poll_status === 'no_aircraft') statusDesc = 'Tracker: No active aircraft tracked';
+            else if (data.last_poll_status === 'no_data') statusDesc = 'Tracker: Last query returned empty (Rate Limited/Out of range)';
+            else if (data.last_poll_status === 'error') statusDesc = 'Tracker: Last poll encountered an error';
+            
+            const trackerEl = document.getElementById('status-tracker');
+            if (trackerEl) {
+                trackerEl.title = `${statusDesc}\nInterval: ${interval}s`;
+            }
+        }
+        
+        if (timeVal) {
+            if (data.last_poll_time) {
+                timeVal.dataset.timestamp = data.last_poll_time;
+                timeVal.textContent = Utils.timeAgo(data.last_poll_time);
+            } else {
+                timeVal.dataset.timestamp = '';
+                timeVal.textContent = 'Never';
+            }
+        }
     },
 
     // ── Rendering ──
@@ -989,6 +1041,8 @@ const Flights = {
             Utils.toast(`Flight status: ${msg.old_status} → ${msg.new_status}`, 'info');
             this.loadAircraft();
             this.loadFlights();
+        } else if (msg.type === 'tracker_status') {
+            this._updateTrackerUI(msg);
         }
     }
 };

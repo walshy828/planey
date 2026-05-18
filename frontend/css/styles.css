@@ -83,6 +83,16 @@ body {
 .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; }
 .status-dot.connected { background: var(--green); box-shadow: 0 0 8px var(--green); }
 .status-dot.disconnected { background: var(--red); box-shadow: 0 0 8px var(--red); }
+.status-dot.airborne { background: var(--accent); box-shadow: 0 0 8px var(--accent); animation: pulse-glow 2.5s infinite ease-in-out; }
+.status-dot.passive { background: var(--text-muted); box-shadow: none; }
+.status-dot.polling { background: var(--purple); box-shadow: 0 0 10px var(--purple); animation: pulse-glow 0.8s infinite ease-in-out; }
+.status-dot.error { background: var(--red); box-shadow: 0 0 8px var(--red); }
+
+@keyframes pulse-glow {
+    0% { opacity: 0.65; transform: scale(0.92); }
+    50% { opacity: 1; transform: scale(1.12); }
+    100% { opacity: 0.65; transform: scale(0.92); }
+}
 
 /* --- Main Layout --- */
 .app-main { display: flex; height: calc(100vh - var(--header-h)); margin-top: var(--header-h); }
