@@ -212,8 +212,8 @@ class Position(Base):
     aircraft_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("aircraft.id", ondelete="CASCADE"), nullable=False
     )
-    flight_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("flights.id", ondelete="SET NULL"), nullable=True
+    flight_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("flights.id", ondelete="CASCADE"), nullable=False
     )
 
     # Position data
@@ -236,7 +236,7 @@ class Position(Base):
 
     # Relationships
     aircraft: Mapped["Aircraft"] = relationship("Aircraft", back_populates="positions")
-    flight: Mapped["Flight | None"] = relationship("Flight", back_populates="positions")
+    flight: Mapped["Flight"] = relationship("Flight", back_populates="positions")
 
     # Composite index for efficient route queries
     __table_args__ = (

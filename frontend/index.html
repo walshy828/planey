@@ -108,13 +108,6 @@
                     </svg>
                     Flights
                 </button>
-                <button class="tab-btn" data-tab="history" id="tab-history">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="12" cy="12" r="10"></circle>
-                        <polyline points="12 6 12 12 16 14"></polyline>
-                    </svg>
-                    History
-                </button>
             </div>
 
             <!-- Aircraft List Panel -->
@@ -149,12 +142,26 @@
 
             <!-- Flights List Panel -->
             <div class="tab-content" id="panel-flights">
-                <div class="panel-header">
-                    <h2>Flights</h2>
-                    <div class="flight-filters">
+                <div class="panel-header" style="flex-direction: column; align-items: stretch; gap: 10px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <h2>Flights & Logs</h2>
+                    </div>
+                    <div class="flight-filters" id="flight-filters-container">
                         <button class="filter-btn active" data-filter="active" id="filter-active">Active</button>
                         <button class="filter-btn" data-filter="scheduled" id="filter-scheduled">Scheduled</button>
+                        <button class="filter-btn" data-filter="completed" id="filter-completed">Completed</button>
                         <button class="filter-btn" data-filter="all" id="filter-all">All</button>
+                    </div>
+                    <div class="history-controls" id="history-controls-subrow" style="display: none; gap: 8px; margin-top: 4px; flex-wrap: wrap;">
+                        <select id="history-aircraft-select" class="input-field" style="font-size: 11px; padding: 4px 8px; height: auto; flex: 1; min-width: 100px;">
+                            <option value="">All Aircraft</option>
+                        </select>
+                        <select id="history-lookback-select" class="input-field" style="font-size: 11px; padding: 4px 8px; height: auto; flex: 1; min-width: 100px;">
+                            <option value="24" selected>Last 24 Hours</option>
+                            <option value="168">Last 7 Days</option>
+                            <option value="720">Last 30 Days</option>
+                            <option value="all">All Time</option>
+                        </select>
                     </div>
                 </div>
                 <div class="flights-list" id="flights-list">
@@ -165,28 +172,6 @@
                             <line x1="8" y1="2" x2="8" y2="6"></line>
                         </svg>
                         <p>No flights to display</p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- History Panel -->
-            <div class="tab-content" id="panel-history">
-                <div class="panel-header">
-                    <h2>Flight History</h2>
-                </div>
-                <div class="history-controls">
-                    <select id="history-aircraft-select" class="select-input">
-                        <option value="">All Aircraft</option>
-                    </select>
-                    <input type="number" id="history-hours" class="input-field input-sm" value="24" min="1" max="720" placeholder="Hours">
-                </div>
-                <div class="history-list" id="history-list">
-                    <div class="empty-state" id="history-empty">
-                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3">
-                            <circle cx="12" cy="12" r="10"></circle>
-                            <polyline points="12 6 12 12 16 14"></polyline>
-                        </svg>
-                        <p>No history available</p>
                     </div>
                 </div>
             </div>

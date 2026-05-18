@@ -153,10 +153,19 @@ class TrackerService:
                         session
                     )
 
+                    if not flight:
+                        logger.warning(f"Skipping position for {aircraft.tail_number}: no active flight found or could be created.")
+                        return None
+
+                    # Validate timestamp within flight range
+                    if not self.is_timestamp_within_flight_range(flight, fr24_pos["timestamp"]):
+                        logger.warning(f"Skipping position for {aircraft.tail_number}: timestamp {fr24_pos['timestamp']} outside flight {flight.flight_number} range.")
+                        return None
+
                     # Create position record
                     new_pos = Position(
                         aircraft_id=aircraft.id,
-                        flight_id=flight.id if flight else None,
+                        flight_id=flight.id,
                         latitude=fr24_pos["latitude"],
                         longitude=fr24_pos["longitude"],
                         altitude_ft=fr24_pos["altitude_ft"],
@@ -204,8 +213,18 @@ class TrackerService:
             session
         )
 
+        if not flight:
+            logger.warning(f"Skipping position for {aircraft.tail_number}: no active flight found or could be created.")
+            return None
+
+        # Validate timestamp within flight range
+        pos_time = datetime.fromtimestamp(sv.time_position or sv.last_contact, timezone.utc)
+        if not self.is_timestamp_within_flight_range(flight, pos_time):
+            logger.warning(f"Skipping position for {aircraft.tail_number}: timestamp {pos_time} outside flight {flight.flight_number} range.")
+            return None
+
         # Update flight status if airborne
-        if flight and not sv.on_ground and flight.status == "scheduled":
+        if not sv.on_ground and flight.status == "scheduled":
             flight.status = "active"
             flight.actual_departure = datetime.now(timezone.utc)
             await ws_manager.broadcast({
@@ -219,7 +238,7 @@ class TrackerService:
         # Create position record
         new_pos = Position(
             aircraft_id=aircraft.id,
-            flight_id=flight.id if flight else None,
+            flight_id=flight.id,
             latitude=sv.latitude,
             longitude=sv.longitude,
             altitude_ft=sv.baro_altitude_m * 3.28084 if sv.baro_altitude_m is not None else None,
@@ -228,7 +247,7 @@ class TrackerService:
             vertical_rate_fpm=sv.vertical_rate_mps * 196.85 if sv.vertical_rate_mps is not None else None,
             on_ground=sv.on_ground,
             squawk=sv.squawk,
-            timestamp=datetime.fromtimestamp(sv.time_position or sv.last_contact, timezone.utc),
+            timestamp=pos_time,
             location_name=await geocoder.get_location_name(sv.latitude, sv.longitude)
         )
         session.add(new_pos)
@@ -358,10 +377,19 @@ class TrackerService:
                         session
                     )
 
+                    if not active_flight:
+                        logger.warning(f"Skipping position for {aircraft.tail_number}: no active flight found or could be created.")
+                        continue
+
+                    # Validate timestamp within flight range
+                    if not self.is_timestamp_within_flight_range(active_flight, sv.timestamp):
+                        logger.warning(f"Skipping position for {aircraft.tail_number}: timestamp {sv.timestamp} outside flight {active_flight.flight_number} range.")
+                        continue
+
                     # Store position
                     position = Position(
                         aircraft_id=aircraft.id,
-                        flight_id=active_flight.id if active_flight else None,
+                        flight_id=active_flight.id,
                         latitude=sv.latitude,
                         longitude=sv.longitude,
                         altitude_ft=sv.altitude_ft,
@@ -512,6 +540,42 @@ class TrackerService:
                 "timestamp": position.timestamp.isoformat() if position.timestamp else None,
             },
         })
+
+    @staticmethod
+    def is_timestamp_within_flight_range(flight: Flight, timestamp: datetime) -> bool:
+        """
+        Validate that a position report timestamp lies within the allowed flight timeframe:
+        - Active/Scheduled flights: t >= min(scheduled_departure, actual_departure) - 15 minutes
+        - Completed/Landed/Cancelled flights: min - 15 minutes <= t <= max(scheduled_arrival, actual_arrival) + 15 minutes
+        """
+        # Normalize timestamp to naive for comparison with naive DB datetimes
+        if timestamp.tzinfo is not None:
+            t_naive = timestamp.replace(tzinfo=None)
+        else:
+            t_naive = timestamp
+
+        # Extract departure times
+        departures = [d for d in [flight.scheduled_departure, flight.actual_departure] if d is not None]
+        if departures:
+            dep_naive = min(departures)
+            if dep_naive.tzinfo is not None:
+                dep_naive = dep_naive.replace(tzinfo=None)
+            lower_bound = dep_naive - timedelta(minutes=15)
+            if t_naive < lower_bound:
+                return False
+
+        # For completed/landed/cancelled flights, also enforce upper bound
+        if flight.status in ["landed", "cancelled"]:
+            arrivals = [a for a in [flight.scheduled_arrival, flight.actual_arrival] if a is not None]
+            if arrivals:
+                arr_naive = max(arrivals)
+                if arr_naive.tzinfo is not None:
+                    arr_naive = arr_naive.replace(tzinfo=None)
+                upper_bound = arr_naive + timedelta(minutes=15)
+                if t_naive > upper_bound:
+                    return False
+
+        return True
 
     async def _update_ha(self, aircraft: Aircraft, position: Position, flight: Optional[Flight]):
         """Update Home Assistant sensor for this aircraft."""

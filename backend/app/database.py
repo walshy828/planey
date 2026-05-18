@@ -61,6 +61,12 @@ async def init_db():
                 await conn.run_sync(Base.metadata.create_all)
                 # Self-healing database upgrade to add summary_stats column if missing
                 await conn.execute(text("ALTER TABLE flights ADD COLUMN IF NOT EXISTS summary_stats JSONB;"))
+                
+                # Delete existing orphan positions to allow setting the non-nullable FK constraint
+                await conn.execute(text("DELETE FROM positions WHERE flight_id IS NULL;"))
+                
+                # Enforce the non-nullable FK constraint on flight_id
+                await conn.execute(text("ALTER TABLE positions ALTER COLUMN flight_id SET NOT NULL;"))
             logger.info("Database initialized successfully")
             return
         except Exception as e:

@@ -33,6 +33,7 @@ router = APIRouter(prefix="/api/flights", tags=["flights"])
 async def list_flights(
     aircraft_id: Optional[uuid.UUID] = None,
     status_filter: Optional[str] = Query(None, alias="status"),
+    hours: Optional[int] = Query(None),
     limit: int = Query(50, le=200),
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
@@ -45,6 +46,16 @@ async def list_flights(
     if status_filter:
         statuses = [s.strip() for s in status_filter.split(",")]
         query = query.where(Flight.status.in_(statuses))
+    if hours:
+        from sqlalchemy import or_
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+        cutoff_naive = cutoff.replace(tzinfo=None)
+        query = query.where(
+            or_(
+                Flight.actual_departure >= cutoff_naive,
+                Flight.scheduled_departure >= cutoff_naive
+            )
+        )
 
     query = query.order_by(Flight.created_at.desc()).limit(limit).offset(offset)
 

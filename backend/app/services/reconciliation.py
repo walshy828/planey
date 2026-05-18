@@ -487,6 +487,54 @@ class ReconciliationService:
                 dest_lon = fa_data.get("dest_lon")
         
         if is_grounded:
+            from app.models import Flight
+            import uuid
+            
+            flight_id = None
+            flight_obj = None
+            
+            # Find active/scheduled flight
+            flight_result = await db.execute(
+                select(Flight)
+                .where(
+                    Flight.aircraft_id == aircraft.id,
+                    Flight.status.in_(["scheduled", "active"])
+                )
+                .order_by(Flight.created_at.desc())
+                .limit(1)
+            )
+            active_flight = flight_result.scalars().first()
+            
+            if active_flight:
+                flight_obj = active_flight
+                flight_id = active_flight.id
+                # Land the flight
+                flight_obj.status = "landed"
+                flight_obj.actual_arrival = datetime.now(timezone.utc)
+                if arrival_iata:
+                    flight_obj.arrival_iata = arrival_iata
+                if arrival_name:
+                    flight_obj.arrival_name = arrival_name
+            elif latest_pos and latest_pos.flight_id:
+                flight_id = latest_pos.flight_id
+            
+            if not flight_id:
+                # Create reconciliation flight
+                flight_obj = Flight(
+                    id=uuid.uuid4(),
+                    aircraft_id=aircraft.id,
+                    flight_number="RECON",
+                    status="landed",
+                    departure_iata="???",
+                    arrival_iata=arrival_iata or "???",
+                    scheduled_departure=datetime.now(timezone.utc) - timedelta(hours=1),
+                    actual_departure=datetime.now(timezone.utc) - timedelta(hours=1),
+                    scheduled_arrival=datetime.now(timezone.utc),
+                    actual_arrival=datetime.now(timezone.utc),
+                )
+                db.add(flight_obj)
+                flight_id = flight_obj.id
+
             # Resolve coordinates of destination airport if missing
             if (not dest_lat or not dest_lon) and arrival_iata:
                 try:
@@ -507,6 +555,7 @@ class ReconciliationService:
             # Create a grounded position
             new_pos = Position(
                 aircraft_id=aircraft.id,
+                flight_id=flight_id,
                 latitude=dest_lat,
                 longitude=dest_lon,
                 altitude_ft=0,

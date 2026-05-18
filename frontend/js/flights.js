@@ -23,14 +23,22 @@ const Flights = {
                 btn.classList.add('active');
                 document.getElementById(`panel-${btn.dataset.tab}`).classList.add('active');
                 
-                // Hide timeline when switching away from history tab
-                if (btn.dataset.tab !== 'history' && window.Timeline && Timeline.aircraftId) {
+                // Hide timeline when switching away from flights tab
+                if (btn.dataset.tab !== 'flights' && window.Timeline && Timeline.aircraftId) {
                     Timeline.hide();
                 }
-
-                if (btn.dataset.tab === 'history') this._loadHistory();
             });
         });
+
+        // History dropdown filters in consolidated flights tab
+        const histAcSelect = document.getElementById('history-aircraft-select');
+        const histLookbackSelect = document.getElementById('history-lookback-select');
+        if (histAcSelect) {
+            histAcSelect.addEventListener('change', () => this.loadFlights());
+        }
+        if (histLookbackSelect) {
+            histLookbackSelect.addEventListener('change', () => this.loadFlights());
+        }
 
         // Flight filter buttons
         document.querySelectorAll('.filter-btn').forEach(btn => {
@@ -147,35 +155,40 @@ const Flights = {
     async loadFlights() {
         try {
             const params = {};
-            if (this.currentFilter === 'active') params.status = 'active,scheduled';
-            else if (this.currentFilter !== 'all') params.status = this.currentFilter;
+            const subrow = document.getElementById('history-controls-subrow');
+            
+            if (this.currentFilter === 'completed' || this.currentFilter === 'all') {
+                if (subrow) subrow.style.display = 'flex';
+                
+                const acSelect = document.getElementById('history-aircraft-select');
+                const lookbackSelect = document.getElementById('history-lookback-select');
+                
+                if (acSelect && acSelect.value) {
+                    params.aircraft_id = acSelect.value;
+                }
+                
+                if (lookbackSelect && lookbackSelect.value !== 'all') {
+                    params.hours = parseInt(lookbackSelect.value);
+                }
+                
+                if (this.currentFilter === 'completed') {
+                    params.status = 'landed';
+                }
+            } else {
+                if (subrow) subrow.style.display = 'none';
+                
+                if (this.currentFilter === 'active') {
+                    params.status = 'active';
+                } else if (this.currentFilter === 'scheduled') {
+                    params.status = 'scheduled';
+                }
+            }
 
             this.flights = await API.getFlights(params);
             this._renderFlightsList();
         } catch (err) {
             Utils.toast('Failed to load flights', 'error');
             console.error(err);
-        }
-    },
-
-    async _loadHistory() {
-        const select = document.getElementById('history-aircraft-select');
-        const hours = parseInt(document.getElementById('history-hours').value) || 24;
-        const aircraftId = select.value;
-
-        if (!aircraftId) {
-            // Show completed flights
-            try {
-                const flights = await API.getFlights({ status: 'landed', limit: 20 });
-                this._renderHistoryList(flights);
-            } catch (err) { console.error(err); }
-            return;
-        }
-
-        // Show position history for specific aircraft
-        const ac = this.aircraft.find(a => a.id === aircraftId);
-        if (ac) {
-            Timeline.showHistory(aircraftId, ac.tail_number, hours);
         }
     },
 
@@ -493,84 +506,6 @@ const Flights = {
             const card = document.createElement('div');
             card.className = 'flight-card';
             card.dataset.id = f.id;
-
-            card.innerHTML = `
-                <div style="display:flex;justify-content:space-between;align-items:flex-start">
-                    <div class="flight-number">${f.flight_number || f.callsign || 'Unknown'}</div>
-                    ${Utils.statusBadge(f.status)}
-                </div>
-                <div class="flight-route-container" style="padding: 10px 0;">
-                    <div class="flight-route">
-                        <div class="route-point">
-                            <span class="flight-airport">${f.departure_iata || '???'}</span>
-                            ${f.departure_name ? `<span class="airport-name">${f.departure_name}</span>` : ''}
-                        </div>
-                        <span class="flight-arrow"><span class="flight-arrow-line"></span>✈<span class="flight-arrow-line"></span></span>
-                        <div class="route-point">
-                            <span class="flight-airport">${f.arrival_iata || '???'}</span>
-                            ${f.arrival_name ? `<span class="airport-name">${f.arrival_name}</span>` : ''}
-                        </div>
-                    </div>
-                    <div class="flight-times">
-                        ${f.actual_departure ? `<span>🛫 ${Utils.formatDateTime(f.actual_departure)}</span>` : 
-                          (f.scheduled_departure ? `<span>🛫 ${Utils.formatDateTime(f.scheduled_departure)}</span>` : '')}
-                        ${f.scheduled_arrival ? `<span>🛬 ${Utils.formatDateTime(f.scheduled_arrival)}</span>` : ''}
-                    </div>
-                </div>
-                <div class="aircraft-actions" style="margin-top:8px">
-                    <button class="btn-primary btn-xs btn-view-flight" data-id="${f.id}" data-aircraft="${f.aircraft_id}">View Trail</button>
-                    <button class="btn-secondary btn-xs btn-edit-flight" data-id="${f.id}">Edit</button>
-                    <button class="btn-danger btn-xs btn-delete-flight" data-id="${f.id}">Delete</button>
-                </div>
-            `;
-
-            list.appendChild(card);
-        }
-
-        list.querySelectorAll('.btn-view-flight').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const f = this.flights.find(fl => fl.id === btn.dataset.id);
-                const title = f ? `${f.flight_number || ''} ${f.departure_iata || ''}→${f.arrival_iata || ''}` : 'Flight';
-                Timeline.showFlight(btn.dataset.id, btn.dataset.aircraft, title);
-            });
-        });
-
-        list.querySelectorAll('.btn-edit-flight').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this._showEditFlightModal(btn.dataset.id);
-            });
-        });
-
-        list.querySelectorAll('.btn-delete-flight').forEach(btn => {
-            btn.addEventListener('click', async (e) => {
-                e.stopPropagation();
-                if (!confirm('Delete this flight and its positions?')) return;
-                try {
-                    await API.deleteFlight(btn.dataset.id);
-                    Utils.toast('Flight deleted', 'success');
-                    this.loadFlights();
-                } catch (err) { Utils.toast(err.message, 'error'); }
-            });
-        });
-    },
-
-    _renderHistoryList(flights) {
-        const list = document.getElementById('history-list');
-        const empty = document.getElementById('history-empty');
-
-        list.querySelectorAll('.flight-card').forEach(c => c.remove());
-
-        if (!flights || flights.length === 0) {
-            empty.style.display = '';
-            return;
-        }
-        empty.style.display = 'none';
-
-        for (const f of flights) {
-            const card = document.createElement('div');
-            card.className = 'flight-card';
             
             // Format pilot-centric telemetry summary stats HUD if present
             let statsHtml = '';
@@ -607,7 +542,7 @@ const Flights = {
                 }
                 
                 statsHtml = `
-                    <div class="flight-stats-summary-grid">
+                    <div class="flight-stats-summary-grid" style="margin-top: 10px; border-top: 1px dashed rgba(255, 255, 255, 0.1); padding-top: 10px;">
                         <div class="stat-box">
                             <div class="stat-label">Duration</div>
                             <div class="stat-value">${durationStr}</div>
@@ -633,24 +568,77 @@ const Flights = {
 
             card.innerHTML = `
                 <div style="display:flex;justify-content:space-between;align-items:flex-start">
-                    <div class="flight-number">${f.flight_number || 'Unknown'}</div>
+                    <div class="flight-number">${f.flight_number || f.callsign || 'Unknown'}</div>
                     ${Utils.statusBadge(f.status)}
                 </div>
-                <div class="flight-route">
-                    <span class="flight-airport" style="font-size:14px">${f.departure_iata || '???'}</span>
-                    <span class="flight-arrow"><span class="flight-arrow-line" style="width:20px"></span>→<span class="flight-arrow-line" style="width:20px"></span></span>
-                    <span class="flight-airport" style="font-size:14px">${f.arrival_iata || '???'}</span>
-                </div>
-                <div class="flight-meta">
-                    <span>${Utils.formatDateTime(f.actual_departure || f.scheduled_departure)}</span>
+                <div class="flight-route-container" style="padding: 10px 0;">
+                    <div class="flight-route">
+                        <div class="route-point">
+                            <span class="flight-airport">${f.departure_iata || '???'}</span>
+                            ${f.departure_name ? `<span class="airport-name">${f.departure_name}</span>` : ''}
+                        </div>
+                        <span class="flight-arrow"><span class="flight-arrow-line"></span>✈<span class="flight-arrow-line"></span></span>
+                        <div class="route-point">
+                            <span class="flight-airport">${f.arrival_iata || '???'}</span>
+                            ${f.arrival_name ? `<span class="airport-name">${f.arrival_name}</span>` : ''}
+                        </div>
+                    </div>
+                    <div class="flight-times">
+                        ${f.actual_departure ? `<span>🛫 ${Utils.formatDateTime(f.actual_departure)}</span>` : 
+                          (f.scheduled_departure ? `<span>🛫 ${Utils.formatDateTime(f.scheduled_departure)}</span>` : '')}
+                        ${f.scheduled_arrival ? `<span>🛬 ${Utils.formatDateTime(f.scheduled_arrival)}</span>` : ''}
+                    </div>
                 </div>
                 ${statsHtml}
+                <div class="aircraft-actions" style="margin-top:8px">
+                    ${(f.status === 'active' || f.status === 'landed') ? `
+                        <button class="btn-primary btn-xs btn-view-flight" data-id="${f.id}" data-aircraft="${f.aircraft_id}">View Trail</button>
+                    ` : ''}
+                    <button class="btn-secondary btn-xs btn-edit-flight" data-id="${f.id}">Edit</button>
+                    <button class="btn-danger btn-xs btn-delete-flight" data-id="${f.id}">Delete</button>
+                </div>
             `;
-            card.addEventListener('click', () => {
-                Timeline.showFlight(f.id, f.aircraft_id, `${f.flight_number || ''} ${f.departure_iata}→${f.arrival_iata}`);
-            });
+
+            // Make the entire card clickable to view the trail if active or landed
+            if (f.status === 'active' || f.status === 'landed') {
+                card.style.cursor = 'pointer';
+                card.addEventListener('click', (e) => {
+                    if (e.target.closest('.aircraft-actions button')) return;
+                    const title = `${f.flight_number || ''} ${f.departure_iata || ''}→${f.arrival_iata || ''}`;
+                    Timeline.showFlight(f.id, f.aircraft_id, title);
+                });
+            }
+
             list.appendChild(card);
         }
+
+        list.querySelectorAll('.btn-view-flight').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const f = this.flights.find(fl => fl.id === btn.dataset.id);
+                const title = f ? `${f.flight_number || ''} ${f.departure_iata || ''}→${f.arrival_iata || ''}` : 'Flight';
+                Timeline.showFlight(btn.dataset.id, btn.dataset.aircraft, title);
+            });
+        });
+
+        list.querySelectorAll('.btn-edit-flight').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this._showEditFlightModal(btn.dataset.id);
+            });
+        });
+
+        list.querySelectorAll('.btn-delete-flight').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                if (!confirm('Delete this flight and its positions?')) return;
+                try {
+                    await API.deleteFlight(btn.dataset.id);
+                    Utils.toast('Flight deleted', 'success');
+                    this.loadFlights();
+                } catch (err) { Utils.toast(err.message, 'error'); }
+            });
+        });
     },
 
     // ── Modals & CRUD ──
