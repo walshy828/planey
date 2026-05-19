@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session
-from app.models import Aircraft, Flight, Position
+from app.models import Aircraft, Flight, Position, record_flight_changes
 from app.services.opensky import opensky_client
 from app.services.flightradar import fr24_client
 from app.services.flightaware import fa_client
@@ -37,6 +37,9 @@ class TrackerService:
         self.last_poll_status = "never"
         self.is_airborne_mode = False
         self.current_interval = 300
+        # Landing confirmation: track consecutive on-ground positions per flight
+        # Key: flight_id (str), Value: count of consecutive on-ground positions
+        self._landing_confirmation_counts = {}
 
     async def _broadcast_tracker_status(self):
         try:
@@ -333,7 +336,7 @@ class TrackerService:
                                 origin_country="",
                                 time_position=int(pos_data["timestamp"].timestamp()),
                                 last_contact=int(pos_data["timestamp"].timestamp()),
-                                longitude=pos_data["latitude"],  # Wait, wait...
+                                longitude=pos_data["longitude"],
                                 latitude=pos_data["latitude"],
                                 baro_altitude_m=pos_data["altitude_ft"] / 3.28084 if pos_data.get("altitude_ft") else None,
                                 on_ground=pos_data.get("on_ground", False),
@@ -346,8 +349,6 @@ class TrackerService:
                                 spi=False,
                                 position_source=0
                             )
-                            # Fix longitude
-                            sv.longitude = pos_data["longitude"]
                             state_vectors.append(sv)
                     except Exception as e:
                         logger.error(f"FR24 fallback failed for {ac.tail_number}: {e}")
@@ -374,7 +375,9 @@ class TrackerService:
                         sv.on_ground,
                         sv.callsign,
                         sv.timestamp,
-                        session
+                        session,
+                        latitude=sv.latitude,
+                        longitude=sv.longitude,
                     )
 
                     if not active_flight:
@@ -431,63 +434,147 @@ class TrackerService:
         is_on_ground: bool,
         callsign: Optional[str],
         timestamp: datetime,
-        session: AsyncSession
+        session: AsyncSession,
+        latitude: float = None,
+        longitude: float = None,
     ) -> Optional[Flight]:
         """
         Retrieves the active/scheduled flight. If none exists and the aircraft
         is airborne, dynamically creates a new active flight and runs position reconciliation.
+        Captures departure coordinates from the first position for helicopter/VFR flights.
         """
-        flight = await self._get_active_flight(aircraft.id, session)
+        flight = await self._get_active_flight(aircraft.id, timestamp, session)
         if flight:
             return flight
 
         if not is_on_ground:
             flight_num = callsign.strip() if callsign else aircraft.tail_number
             logger.info(f"Airborne telemetry detected for {aircraft.tail_number} with no active flight. Auto-creating active flight {flight_num}.")
-            
-            # Ensure naive datetime for DB consistency
-            ts_naive = timestamp.replace(tzinfo=None) if timestamp.tzinfo else timestamp
+
+            # Geocode departure location from first airborne position
+            departure_name = None
+            if latitude is not None and longitude is not None:
+                try:
+                    departure_name = await geocoder.get_location_name(latitude, longitude)
+                except Exception as e:
+                    logger.warning(f"Failed to geocode departure for auto-created flight: {e}")
 
             new_flight = Flight(
                 aircraft_id=aircraft.id,
                 flight_number=flight_num,
                 callsign=flight_num,
                 status="active",
-                actual_departure=ts_naive
+                actual_departure=timestamp,
+                departure_lat=latitude,
+                departure_lon=longitude,
+                departure_name=departure_name,
+                raw_data={"source": "auto-detected", "first_position_timestamp": timestamp.isoformat()}
             )
             session.add(new_flight)
-            await session.flush() # Populate the ID
-            
+            await session.flush()  # Populate the ID
+
+            # Record the auto-creation in change history
+            await record_flight_changes(new_flight, {
+                "status": "active",
+                "departure_name": departure_name,
+            }, "tracker_auto_create", session)
+
             try:
                 from app.services.reconciliation import reconciliation_service
                 await reconciliation_service.reconcile_orphan_positions(new_flight, session)
             except Exception as e:
                 logger.error(f"Failed to reconcile orphan positions for auto-created flight: {e}")
-                
+
             return new_flight
 
         return None
 
-    async def _get_active_flight(self, aircraft_id, session: AsyncSession) -> Optional[Flight]:
-        """Get the currently active or most recent scheduled flight for an aircraft."""
+    async def _get_active_flight(self, aircraft_id, timestamp: datetime, session: AsyncSession) -> Optional[Flight]:
+        """Get the currently active or closest scheduled flight for an aircraft.
+        
+        Selects the flight closest in time to the given position timestamp,
+        rather than just the most recently scheduled one. This prevents future
+        flights from stealing positions meant for current/previous flights.
+        """
         result = await session.execute(
             select(Flight).where(
                 Flight.aircraft_id == aircraft_id,
                 Flight.status.in_(["scheduled", "active"]),
-            ).order_by(Flight.scheduled_departure.desc().nullslast())
+            )
         )
-        return result.scalars().first()
+        candidates = result.scalars().all()
+        if not candidates:
+            return None
+
+        # Always prefer active flights first
+        active = [f for f in candidates if f.status == "active"]
+        if active:
+            return active[0]
+
+        # For scheduled flights, pick the one closest in time to the position timestamp
+        from sqlalchemy import func
+        ts = timestamp.replace(tzinfo=None) if timestamp.tzinfo else timestamp
+
+        def flight_proximity(f):
+            dep = f.scheduled_departure or f.actual_departure
+            if dep is None:
+                return float('inf')
+            dep_naive = dep.replace(tzinfo=None) if dep.tzinfo else dep
+            return abs((ts - dep_naive).total_seconds())
+
+        candidates.sort(key=flight_proximity)
+        return candidates[0]
 
     async def _update_flight_status(self, flight: Flight, sv, session: AsyncSession):
-        """Update flight status based on position data."""
+        """Update flight status based on position data.
+        
+        Landing requires 5 consecutive on-ground positions to prevent
+        premature landing detection from touch-and-gos or fuel stops.
+        """
         old_status = flight.status
+        flight_key = str(flight.id)
 
         if sv.on_ground:
             if old_status == "active":
-                # Was flying, now on ground = landed
+                # Increment landing confirmation counter
+                self._landing_confirmation_counts[flight_key] = \
+                    self._landing_confirmation_counts.get(flight_key, 0) + 1
+                count = self._landing_confirmation_counts[flight_key]
+
+                if count < 5:
+                    logger.debug(
+                        f"Flight {flight.flight_number} on-ground position "
+                        f"{count}/5 — awaiting landing confirmation"
+                    )
+                    return  # Don't mark as landed yet
+
+                # 5 consecutive on-ground positions confirmed — aircraft has landed
+                del self._landing_confirmation_counts[flight_key]
+
+                # Populate arrival_name from the last position if no arrival airport
+                arrival_name = flight.arrival_name
+                if not flight.arrival_iata and not flight.arrival_name:
+                    try:
+                        arrival_name = await geocoder.get_location_name(sv.latitude, sv.longitude)
+                    except Exception:
+                        pass
+
+                # Record change history
+                landing_updates = {
+                    "status": "landed",
+                    "actual_arrival": str(datetime.now(timezone.utc)),
+                }
+                if arrival_name and arrival_name != flight.arrival_name:
+                    landing_updates["arrival_name"] = arrival_name
+                await record_flight_changes(flight, landing_updates, "tracker", session)
+
                 flight.status = "landed"
                 flight.actual_arrival = datetime.now(timezone.utc)
-                logger.info(f"Flight {flight.flight_number} has landed")
+                if arrival_name:
+                    flight.arrival_name = arrival_name
+                    flight.arrival_lat = sv.latitude
+                    flight.arrival_lon = sv.longitude
+                logger.info(f"Flight {flight.flight_number} has landed (5 consecutive on-ground confirmed)")
 
                 # Proactively calculate flight summary statistics upon landing
                 try:
@@ -507,8 +594,17 @@ class TrackerService:
                     "summary_stats": flight.summary_stats,
                 })
         else:
+            # Aircraft is airborne — reset any landing confirmation counter
+            if flight_key in self._landing_confirmation_counts:
+                logger.debug(
+                    f"Flight {flight.flight_number} back airborne — "
+                    f"resetting landing counter (was {self._landing_confirmation_counts[flight_key]})"
+                )
+                del self._landing_confirmation_counts[flight_key]
+
             if old_status == "scheduled":
                 # Was scheduled, now in the air = active
+                await record_flight_changes(flight, {"status": "active"}, "tracker", session)
                 flight.status = "active"
                 flight.actual_departure = datetime.now(timezone.utc)
                 logger.info(f"Flight {flight.flight_number} has departed")
@@ -628,7 +724,7 @@ class TrackerService:
 
     async def _update_ha_no_position(self, aircraft: Aircraft, session: AsyncSession):
         """Update HA when we have no position data (aircraft not broadcasting)."""
-        active_flight = await self._get_active_flight(aircraft.id, session)
+        active_flight = await self._get_active_flight(aircraft.id, datetime.now(timezone.utc), session)
 
         flight_data = None
         if active_flight:

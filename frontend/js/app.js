@@ -80,6 +80,10 @@ const App = {
             if (settings.reconciliation_interval_minutes) {
                 document.getElementById('set-reconciliation-interval').value = settings.reconciliation_interval_minutes;
             }
+            // Data retention settings
+            document.getElementById('set-position-retention-days').value = settings.position_retention_days || '90';
+            document.getElementById('set-history-retention-days').value = settings.flight_history_retention_days || '90';
+
             document.getElementById('modal-settings').style.display = '';
         } catch (err) {
             Utils.toast('Failed to load settings', 'error');
@@ -97,6 +101,8 @@ const App = {
             manual_airborne_mode: document.getElementById('set-manual-airborne-mode').checked ? 'true' : 'false',
             schedule_sync_interval_minutes: document.getElementById('set-sync-interval').value,
             reconciliation_interval_minutes: document.getElementById('set-reconciliation-interval').value,
+            position_retention_days: document.getElementById('set-position-retention-days').value,
+            flight_history_retention_days: document.getElementById('set-history-retention-days').value,
         };
 
         try {

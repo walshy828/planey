@@ -14,12 +14,13 @@ from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import Aircraft, Flight, Position
+from app.models import Aircraft, Flight, Position, FlightChangeHistory
 from app.schemas import (
     FlightCreate,
     FlightResponse,
     FlightUpdate,
     FlightWithPositions,
+    FlightChangeHistoryResponse,
     PositionResponse,
 )
 from app.services.flightradar import fr24_client
@@ -243,6 +244,15 @@ async def get_flight(
         from app.schemas import AircraftResponse
         flight_data.aircraft = AircraftResponse.model_validate(aircraft)
 
+    # Load change history
+    history_result = await db.execute(
+        select(FlightChangeHistory)
+        .where(FlightChangeHistory.flight_id == flight.id)
+        .order_by(FlightChangeHistory.changed_at.desc())
+    )
+    history = history_result.scalars().all()
+    flight_data.change_history = [FlightChangeHistoryResponse.model_validate(h) for h in history]
+
     return flight_data
 
 
@@ -315,3 +325,23 @@ async def reconcile_flight_endpoint(
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Reconciliation failed: {e}")
+
+
+@router.get("/{flight_id}/history", response_model=list[FlightChangeHistoryResponse])
+async def get_flight_history(
+    flight_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get audit trail of changes for a specific flight."""
+    # Verify flight exists
+    result = await db.execute(select(Flight).where(Flight.id == flight_id))
+    if not result.scalars().first():
+        raise HTTPException(status_code=404, detail="Flight not found")
+
+    history_result = await db.execute(
+        select(FlightChangeHistory)
+        .where(FlightChangeHistory.flight_id == flight_id)
+        .order_by(FlightChangeHistory.changed_at.desc())
+    )
+    history = history_result.scalars().all()
+    return [FlightChangeHistoryResponse.model_validate(h) for h in history]

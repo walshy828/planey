@@ -62,6 +62,21 @@ async def init_db():
                 # Self-healing database upgrade to add summary_stats column if missing
                 await conn.execute(text("ALTER TABLE flights ADD COLUMN IF NOT EXISTS summary_stats JSONB;"))
                 
+                # Self-healing: ensure flight_change_history table exists
+                await conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS flight_change_history (
+                        id BIGSERIAL PRIMARY KEY,
+                        flight_id UUID NOT NULL REFERENCES flights(id) ON DELETE CASCADE,
+                        changed_at TIMESTAMPTZ DEFAULT NOW(),
+                        change_source VARCHAR(50) NOT NULL,
+                        field_name VARCHAR(50) NOT NULL,
+                        old_value TEXT,
+                        new_value TEXT
+                    );
+                """))
+                await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_flight_change_history_flight_id ON flight_change_history(flight_id);"))
+                await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_flight_change_history_changed_at ON flight_change_history(changed_at);"))
+                
                 # Delete existing orphan positions to allow setting the non-nullable FK constraint
                 await conn.execute(text("DELETE FROM positions WHERE flight_id IS NULL;"))
                 

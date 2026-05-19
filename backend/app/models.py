@@ -151,6 +151,10 @@ class Flight(Base):
     positions: Mapped[list["Position"]] = relationship(
         "Position", back_populates="flight", cascade="all, delete-orphan"
     )
+    change_history: Mapped[list["FlightChangeHistory"]] = relationship(
+        "FlightChangeHistory", back_populates="flight", cascade="all, delete-orphan",
+        order_by="FlightChangeHistory.changed_at.desc()"
+    )
 
     @validates("actual_departure", "actual_arrival", "scheduled_departure", "scheduled_arrival")
     def validate_times(self, key, value):
@@ -246,3 +250,95 @@ class Position(Base):
 
     def __repr__(self):
         return f"<Position {self.latitude},{self.longitude} alt={self.altitude_ft}ft>"
+
+
+class FlightChangeHistory(Base):
+    """
+    Audit trail for flight record changes.
+    Tracks what field changed, old/new values, when, and what triggered the change.
+    """
+
+    __tablename__ = "flight_change_history"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    flight_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("flights.id", ondelete="CASCADE"), nullable=False
+    )
+    changed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    # Source of the change: "webhook", "reconciliation", "tracker", "manual", "flightaware_sync"
+    change_source: Mapped[str] = mapped_column(String(50), nullable=False)
+    field_name: Mapped[str] = mapped_column(String(50), nullable=False)
+    old_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    new_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Relationships
+    flight: Mapped["Flight"] = relationship("Flight", back_populates="change_history")
+
+    __table_args__ = (
+        Index("ix_flight_change_history_flight_id", "flight_id"),
+        Index("ix_flight_change_history_changed_at", "changed_at"),
+    )
+
+    def __repr__(self):
+        return f"<FlightChangeHistory {self.field_name}: {self.old_value} → {self.new_value}>"
+
+
+async def record_flight_changes(
+    flight: Flight,
+    updates: dict,
+    source: str,
+    db,
+) -> list:
+    """
+    Compare proposed updates against current flight values and record any differences
+    to the flight_change_history table.
+
+    Args:
+        flight: The Flight ORM object (current state)
+        updates: Dict of {field_name: new_value} to apply
+        source: The change source identifier (e.g., "webhook", "reconciliation")
+        db: The async database session
+
+    Returns:
+        List of FlightChangeHistory objects that were created
+    """
+    history_records = []
+    tracked_fields = {
+        "flight_number", "callsign", "status",
+        "departure_iata", "departure_icao", "departure_name",
+        "departure_lat", "departure_lon",
+        "arrival_iata", "arrival_icao", "arrival_name",
+        "arrival_lat", "arrival_lon",
+        "scheduled_departure", "scheduled_arrival",
+        "actual_departure", "actual_arrival",
+        "expected_route",
+    }
+
+    for field_name, new_value in updates.items():
+        if field_name not in tracked_fields:
+            continue
+
+        old_value = getattr(flight, field_name, None)
+
+        # Normalize for comparison
+        old_str = str(old_value) if old_value is not None else None
+        new_str = str(new_value) if new_value is not None else None
+
+        if old_str != new_str:
+            record = FlightChangeHistory(
+                flight_id=flight.id,
+                change_source=source,
+                field_name=field_name,
+                old_value=old_str,
+                new_value=new_str,
+            )
+            db.add(record)
+            history_records.append(record)
+            logger.info(
+                f"Flight {flight.id} change [{source}]: {field_name} "
+                f"{old_str!r} → {new_str!r}"
+            )
+
+    return history_records

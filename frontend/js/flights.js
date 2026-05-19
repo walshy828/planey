@@ -341,13 +341,13 @@ const Flights = {
                         <div class="flight-route-container">
                             <div class="flight-route">
                                 <div class="route-point">
-                                    <span class="flight-airport">${flight.departure_iata || '???'}</span>
-                                    ${flight.departure_name ? `<span class="airport-name">${flight.departure_name}</span>` : ''}
+                                    <span class="flight-airport"${!flight.departure_iata && flight.departure_name ? ' style="font-size:11px;font-style:italic;letter-spacing:0"' : ''}>${flight.departure_iata || (flight.departure_name ? flight.departure_name : '???')}</span>
+                                    ${flight.departure_name && flight.departure_iata ? `<span class="airport-name">${flight.departure_name}</span>` : ''}
                                 </div>
                                 <span class="flight-arrow"><span class="flight-arrow-line"></span>✈<span class="flight-arrow-line"></span></span>
                                 <div class="route-point">
-                                    <span class="flight-airport">${flight.arrival_iata || '???'}</span>
-                                    ${flight.arrival_name ? `<span class="airport-name">${flight.arrival_name}</span>` : ''}
+                                    <span class="flight-airport"${!flight.arrival_iata && flight.arrival_name ? ' style="font-size:11px;font-style:italic;letter-spacing:0"' : ''}>${flight.arrival_iata || (flight.arrival_name ? flight.arrival_name : '???')}</span>
+                                    ${flight.arrival_name && flight.arrival_iata ? `<span class="airport-name">${flight.arrival_name}</span>` : ''}
                                 </div>
                             </div>
                             <div class="flight-times">
@@ -574,13 +574,13 @@ const Flights = {
                 <div class="flight-route-container" style="padding: 10px 0;">
                     <div class="flight-route">
                         <div class="route-point">
-                            <span class="flight-airport">${f.departure_iata || '???'}</span>
-                            ${f.departure_name ? `<span class="airport-name">${f.departure_name}</span>` : ''}
+                            <span class="flight-airport"${!f.departure_iata && f.departure_name ? ' style="font-size:11px;font-style:italic;letter-spacing:0"' : ''}>${f.departure_iata || (f.departure_name ? f.departure_name : '???')}</span>
+                            ${f.departure_name && f.departure_iata ? `<span class="airport-name">${f.departure_name}</span>` : ''}
                         </div>
                         <span class="flight-arrow"><span class="flight-arrow-line"></span>✈<span class="flight-arrow-line"></span></span>
                         <div class="route-point">
-                            <span class="flight-airport">${f.arrival_iata || '???'}</span>
-                            ${f.arrival_name ? `<span class="airport-name">${f.arrival_name}</span>` : ''}
+                            <span class="flight-airport"${!f.arrival_iata && f.arrival_name ? ' style="font-size:11px;font-style:italic;letter-spacing:0"' : ''}>${f.arrival_iata || (f.arrival_name ? f.arrival_name : '???')}</span>
+                            ${f.arrival_name && f.arrival_iata ? `<span class="airport-name">${f.arrival_name}</span>` : ''}
                         </div>
                     </div>
                     <div class="flight-times">

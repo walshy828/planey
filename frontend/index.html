@@ -431,6 +431,25 @@
                     <span class="form-hint">How often the backend sweeps for active flights with no recent GPS updates to automatically close them out.</span>
                 </div>
                 <div class="form-group" style="margin-top: 20px; border-top: 1px solid var(--border-color); padding-top: 20px;">
+                    <label style="font-weight: 600; margin-bottom: 12px; display: block; color: var(--text-primary);">Data Retention</label>
+                    <div class="form-group">
+                        <label for="set-position-retention-days">Position Data Retention</label>
+                        <div class="input-with-unit">
+                            <input type="number" id="set-position-retention-days" class="input-field" value="90" min="7" max="3650">
+                            <span class="input-unit">days</span>
+                        </div>
+                        <span class="form-hint">How long to keep raw GPS position data. Older positions are permanently deleted during nightly cleanup.</span>
+                    </div>
+                    <div class="form-group" style="margin-top: 12px;">
+                        <label for="set-history-retention-days">Flight Change History Retention</label>
+                        <div class="input-with-unit">
+                            <input type="number" id="set-history-retention-days" class="input-field" value="90" min="7" max="3650">
+                            <span class="input-unit">days</span>
+                        </div>
+                        <span class="form-hint">How long to keep the audit trail of flight data changes (reconciliation updates, webhook modifications, etc).</span>
+                    </div>
+                </div>
+                <div class="form-group" style="margin-top: 20px; border-top: 1px solid var(--border-color); padding-top: 20px;">
                     <label>Manual Actions</label>
                     <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 10px;">
                         <button type="button" class="btn-secondary" id="btn-reconcile-all" style="display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%;">

@@ -124,10 +124,25 @@ class FlightResponse(BaseModel):
         from_attributes = True
 
 
+class FlightChangeHistoryResponse(BaseModel):
+    """Schema for flight change history entries."""
+    id: int
+    flight_id: uuid.UUID
+    changed_at: datetime
+    change_source: str
+    field_name: str
+    old_value: Optional[str] = None
+    new_value: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
 class FlightWithPositions(FlightResponse):
     """Flight response with position trail."""
     positions: list["PositionResponse"] = []
     aircraft: Optional[AircraftResponse] = None
+    change_history: list[FlightChangeHistoryResponse] = []
 
 
 # =============================================================================

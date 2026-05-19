@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
-from app.models import Aircraft, Flight
+from app.models import Aircraft, Flight, record_flight_changes
 from app.schemas import WebhookFlightFiled, WebhookFlightDeparted, WebhookFlightArrived, FlightResponse
 
 logger = logging.getLogger(__name__)
@@ -83,6 +83,25 @@ async def webhook_flight_filed(
 
         if is_match:
             logger.info(f"Deduplicated and updating flight plan for {payload.tail_number}. Status: {existing.status}")
+            # Record change history before applying updates
+            updates = {}
+            if payload.flight_number and payload.flight_number != existing.flight_number:
+                updates["flight_number"] = payload.flight_number
+            if payload.callsign and payload.callsign != existing.callsign:
+                updates["callsign"] = payload.callsign
+            if payload.departure_iata and payload.departure_iata != existing.departure_iata:
+                updates["departure_iata"] = payload.departure_iata
+            if payload.arrival_iata and payload.arrival_iata != existing.arrival_iata:
+                updates["arrival_iata"] = payload.arrival_iata
+            if payload.scheduled_departure and payload.scheduled_departure != existing.scheduled_departure:
+                updates["scheduled_departure"] = payload.scheduled_departure
+            if payload.scheduled_arrival and payload.scheduled_arrival != existing.scheduled_arrival:
+                updates["scheduled_arrival"] = payload.scheduled_arrival
+            if payload.expected_route and payload.expected_route != existing.expected_route:
+                updates["expected_route"] = payload.expected_route
+
+            await record_flight_changes(existing, updates, "webhook_filed", db)
+
             # Update details in-place
             existing.flight_number = payload.flight_number or existing.flight_number
             existing.callsign = payload.callsign or existing.callsign
@@ -171,6 +190,40 @@ async def webhook_flight_departed(
     active_flights = active_res.scalars().all()
     dep_time = payload.actual_departure or datetime.now(timezone.utc)
     duplicate_flight = None
+
+    # Fuel stop detection: check if a recently-landed flight ended at the same
+    # airport we're now departing from (gap < 30 min = fuel stop)
+    recent_landed_res = await db.execute(
+        select(Flight)
+        .where(
+            Flight.aircraft_id == aircraft.id,
+            Flight.status == "landed",
+            Flight.actual_arrival.isnot(None),
+        )
+        .order_by(Flight.actual_arrival.desc())
+        .limit(1)
+    )
+    recent_landed = recent_landed_res.scalars().first()
+    if recent_landed and recent_landed.actual_arrival:
+        arr_naive = recent_landed.actual_arrival.replace(tzinfo=None) if recent_landed.actual_arrival.tzinfo else recent_landed.actual_arrival
+        dep_naive = dep_time.replace(tzinfo=None) if dep_time.tzinfo else dep_time
+        gap_minutes = (dep_naive - arr_naive).total_seconds() / 60
+        same_airport = (
+            payload.departure_iata and recent_landed.arrival_iata
+            and payload.departure_iata == recent_landed.arrival_iata
+        )
+        if same_airport and 0 < gap_minutes < 30:
+            logger.info(
+                f"Fuel stop detected: {aircraft.tail_number} landed at "
+                f"{recent_landed.arrival_iata} {gap_minutes:.0f}min ago, now departing same airport. "
+                f"Tagging flight {recent_landed.id} as fuel_stop."
+            )
+            # Tag the previous flight for audit/display purposes
+            raw = recent_landed.raw_data or {}
+            raw["fuel_stop"] = True
+            raw["fuel_stop_gap_minutes"] = round(gap_minutes, 1)
+            recent_landed.raw_data = raw
+
     for old_flight in active_flights:
         # Check if it's a duplicate webhook (same departure, within 4 hours)
         is_duplicate = False
@@ -259,6 +312,12 @@ async def webhook_flight_departed(
             status="active"
         )
         db.add(flight)
+
+    # Record status change history
+    status_updates = {"status": "active"}
+    if payload.arrival_iata and not flight.arrival_iata:
+        status_updates["arrival_iata"] = payload.arrival_iata
+    await record_flight_changes(flight, status_updates, "webhook_departed", db)
 
     # Set times and coordinate lookups
     flight.actual_departure = dep_time
@@ -431,6 +490,12 @@ async def webhook_flight_arrived(
     if payload.arrival_iata and not flight.arrival_iata:
         flight.arrival_iata = payload.arrival_iata
     flight.actual_arrival = arr_time
+
+    # Record change history for arrival
+    arrival_updates = {"status": "landed", "actual_arrival": str(arr_time)}
+    if payload.arrival_iata:
+        arrival_updates["arrival_iata"] = payload.arrival_iata
+    await record_flight_changes(flight, arrival_updates, "webhook_arrived", db)
 
     # Ensure coordinates are geocoded
     from app.services.geocoder import geocoder

@@ -107,6 +107,16 @@ async def lifespan(app: FastAPI):
         name="Purge old positions",
     )
 
+    # Schedule daily flight history cleanup (run at 3:15 AM UTC)
+    scheduler.add_job(
+        cleanup_service.purge_old_flight_history,
+        "cron",
+        hour=3,
+        minute=15,
+        id="cleanup_flight_history",
+        name="Purge old flight history",
+    )
+
     # Schedule flight schedule sync
     scheduler.add_job(
         tracker_service.sync_flight_schedules,

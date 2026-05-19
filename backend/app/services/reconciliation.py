@@ -210,28 +210,40 @@ class ReconciliationService:
         if not fa_data:
             return {"status": "failed", "message": "Could not find historical data in FR24/FA"}
             
-        # 4. Update the Flight
+        # 4. Update the Flight — record all changes for audit trail
+        from app.models import record_flight_changes
         updated = False
         
         if fa_data.get("status") in ["landed", "arrived", "arrived / delayed"]:
-            flight.status = "landed"
-            
-            # Update arrival info if it changed
+            # Build updates dict for history tracking
+            recon_updates = {"status": "landed"}
             if fa_data.get("arrival_iata") and not flight.arrival_iata:
-                flight.arrival_iata = fa_data["arrival_iata"]
+                recon_updates["arrival_iata"] = fa_data["arrival_iata"]
             if fa_data.get("arrival_name") and not flight.arrival_name:
-                flight.arrival_name = fa_data["arrival_name"]
-                
-            # Update times
+                recon_updates["arrival_name"] = fa_data["arrival_name"]
             if fa_data.get("scheduled_arrival"):
-                flight.scheduled_arrival = self._ensure_tz(fa_data["scheduled_arrival"])
+                recon_updates["scheduled_arrival"] = self._ensure_tz(fa_data["scheduled_arrival"])
             if fa_data.get("actual_arrival"):
-                flight.actual_arrival = self._ensure_tz(fa_data["actual_arrival"])
+                recon_updates["actual_arrival"] = self._ensure_tz(fa_data["actual_arrival"])
             elif fa_data.get("scheduled_arrival"):
-                flight.actual_arrival = self._ensure_tz(fa_data["scheduled_arrival"])
-                
+                recon_updates["actual_arrival"] = self._ensure_tz(fa_data["scheduled_arrival"])
             if fa_data.get("actual_departure"):
-                flight.actual_departure = self._ensure_tz(fa_data["actual_departure"])
+                recon_updates["actual_departure"] = self._ensure_tz(fa_data["actual_departure"])
+
+            await record_flight_changes(flight, recon_updates, "reconciliation", db)
+
+            # Apply updates
+            flight.status = "landed"
+            if recon_updates.get("arrival_iata"):
+                flight.arrival_iata = recon_updates["arrival_iata"]
+            if recon_updates.get("arrival_name"):
+                flight.arrival_name = recon_updates["arrival_name"]
+            if recon_updates.get("scheduled_arrival"):
+                flight.scheduled_arrival = recon_updates["scheduled_arrival"]
+            if recon_updates.get("actual_arrival"):
+                flight.actual_arrival = recon_updates["actual_arrival"]
+            if recon_updates.get("actual_departure"):
+                flight.actual_departure = recon_updates["actual_departure"]
                 
             updated = True
             
