@@ -147,10 +147,10 @@
                         <h2>Flights & Logs</h2>
                     </div>
                     <div class="flight-filters" id="flight-filters-container">
-                        <button class="filter-btn active" data-filter="active" id="filter-active">Active</button>
+                        <button class="filter-btn active" data-filter="all" id="filter-all">All</button>
+                        <button class="filter-btn" data-filter="active" id="filter-active">Active</button>
                         <button class="filter-btn" data-filter="scheduled" id="filter-scheduled">Scheduled</button>
                         <button class="filter-btn" data-filter="completed" id="filter-completed">Completed</button>
-                        <button class="filter-btn" data-filter="all" id="filter-all">All</button>
                     </div>
                     <div class="history-controls" id="history-controls-subrow" style="display: none; gap: 8px; margin-top: 4px; flex-wrap: wrap;">
                         <select id="history-aircraft-select" class="input-field" style="font-size: 11px; padding: 4px 8px; height: auto; flex: 1; min-width: 100px;">
@@ -281,6 +281,14 @@
                         <label for="input-airline">Airline</label>
                         <input type="text" id="input-airline" class="input-field" placeholder="e.g., American" autocomplete="off">
                     </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="input-aircraft-category">Aircraft Category</label>
+                    <select id="input-aircraft-category" class="input-field">
+                        <option value="plane">Plane</option>
+                        <option value="helicopter">Helicopter</option>
+                    </select>
                 </div>
 
                 <!-- Lookup Result Preview -->

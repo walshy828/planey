@@ -62,6 +62,7 @@ class Aircraft(Base):
     aircraft_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
     airline: Mapped[str | None] = mapped_column(String(100), nullable=True)
     display_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    category: Mapped[str] = mapped_column(String(50), default="plane", server_default="plane")
     photo_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(

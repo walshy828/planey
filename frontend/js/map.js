@@ -43,7 +43,7 @@ const FlightMap = {
      * Update or create a marker for an aircraft
      */
     updateMarker(aircraftId, data) {
-        const { latitude, longitude, heading, altitude_ft, tail_number, ground_speed_kts, vertical_rate_fpm, on_ground } = data;
+        const { latitude, longitude, heading, altitude_ft, tail_number, ground_speed_kts, vertical_rate_fpm, on_ground, category } = data;
         if (latitude == null || longitude == null) return;
 
         const pos = [latitude, longitude];
@@ -52,11 +52,11 @@ const FlightMap = {
         if (this.markers[aircraftId]) {
             // Animate move
             this.markers[aircraftId].setLatLng(pos);
-            this.markers[aircraftId].setIcon(Utils.airplaneIcon(heading, color));
+            this.markers[aircraftId].setIcon(Utils.aircraftIcon(heading, color, category));
         } else {
             // Create new marker
             const marker = L.marker(pos, {
-                icon: Utils.airplaneIcon(heading, color),
+                icon: Utils.aircraftIcon(heading, color, category),
                 zIndexOffset: 1000
             }).addTo(this.map);
 
@@ -339,7 +339,7 @@ const FlightMap = {
         return `
             <div style="min-width:200px">
                 <div style="font-size:15px;font-weight:700;color:#00d4ff;margin-bottom:6px">
-                    ${data.tail_number || 'Unknown'}
+                    ${data.tail_number || 'Unknown'}${data.category === 'helicopter' ? ' 🚁' : ''}
                     ${data.flight_number ? `<span style="font-size:12px;color:#8899aa;margin-left:6px">${data.flight_number}</span>` : ''}
                 </div>
                 ${data.departure_iata || data.arrival_iata ? `
@@ -376,7 +376,7 @@ const FlightMap = {
         return `
             <div style="line-height:1.2">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">
-                    <span style="font-weight:bold;color:#00d4ff;">${data.tail_number}</span>
+                    <span style="font-weight:bold;color:#00d4ff;">${data.tail_number}${data.category === 'helicopter' ? ' 🚁' : ''}</span>
                     ${data.timestamp ? `<span class="live-time-ago" data-timestamp="${data.timestamp}" style="font-size:9px;color:#8899aa;margin-left:8px;">${Utils.timeAgo(data.timestamp)}</span>` : ''}
                 </div>
                 <div style="font-size:11px">

@@ -131,6 +131,7 @@ async def add_aircraft(
         aircraft_type=aircraft_type,
         airline=airline,
         display_name=display_name or aircraft.tail_number.upper(),
+        category=aircraft.category or "plane",
         photo_url=photo_url,
         active=True,
     )

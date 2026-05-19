@@ -61,6 +61,8 @@ async def init_db():
                 await conn.run_sync(Base.metadata.create_all)
                 # Self-healing database upgrade to add summary_stats column if missing
                 await conn.execute(text("ALTER TABLE flights ADD COLUMN IF NOT EXISTS summary_stats JSONB;"))
+                # Self-healing: add category column to aircraft table if missing
+                await conn.execute(text("ALTER TABLE aircraft ADD COLUMN IF NOT EXISTS category VARCHAR(50) DEFAULT 'plane';"))
                 
                 # Self-healing: ensure flight_change_history table exists
                 await conn.execute(text("""

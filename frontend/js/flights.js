@@ -9,7 +9,7 @@ const Flights = {
     selectedAircraftId: null,
     editingAircraftId: null,
     editingFlightId: null,
-    currentFilter: 'active',
+    currentFilter: 'all',
     aircraftFilter: 'all',
     aircraftSort: 'status',
     manuallyToggledCollapse: new Map(), // aircraftId -> boolean (isCollapsed)
@@ -110,6 +110,7 @@ const Flights = {
                         flight_number: ac.active_flight?.flight_number,
                         departure_iata: ac.active_flight?.departure_iata,
                         arrival_iata: ac.active_flight?.arrival_iata,
+                        category: ac.category,
                     });
                 }
                 if (ac.active_flight && ac.active_flight.status === 'scheduled') {
@@ -143,6 +144,7 @@ const Flights = {
                         flight_number: ac.active_flight?.flight_number,
                         departure_iata: ac.active_flight?.departure_iata,
                         arrival_iata: ac.active_flight?.arrival_iata,
+                        category: ac.category,
                     });
                 }
             } catch (err) {
@@ -323,7 +325,7 @@ const Flights = {
             card.innerHTML = `
                 <div class="aircraft-card-header">
                     <div>
-                        <div class="aircraft-tail">${ac.tail_number}</div>
+                        <div class="aircraft-tail">${ac.tail_number}${ac.category === 'helicopter' ? ' 🚁' : ''}</div>
                         <div class="aircraft-type">${ac.aircraft_type || 'Unknown type'}${ac.airline ? ` · ${ac.airline}` : ''}</div>
                         ${pos ? `<div class="aircraft-collapsed-location" id="loc-collapsed-${ac.id}">Loading last location...</div>` : ''}
                         ${pos ? `<div class="aircraft-collapsed-activity">${pos.on_ground ? 'Landed' : 'Active'}: <span class="${pos.on_ground ? '' : 'live-time-ago'}" data-timestamp="${pos.on_ground ? '' : pos.timestamp}">${pos.on_ground ? Utils.formatDateTime(pos.timestamp) : Utils.timeAgo(pos.timestamp)}</span></div>` : ''}
@@ -344,7 +346,7 @@ const Flights = {
                                     <span class="flight-airport"${!flight.departure_iata && flight.departure_name ? ' style="font-size:11px;font-style:italic;letter-spacing:0"' : ''}>${flight.departure_iata || (flight.departure_name ? flight.departure_name : '???')}</span>
                                     ${flight.departure_name && flight.departure_iata ? `<span class="airport-name">${flight.departure_name}</span>` : ''}
                                 </div>
-                                <span class="flight-arrow"><span class="flight-arrow-line"></span>✈<span class="flight-arrow-line"></span></span>
+                                <span class="flight-arrow"><span class="flight-arrow-line"></span>${ac.category === 'helicopter' ? '🚁' : '✈'}<span class="flight-arrow-line"></span></span>
                                 <div class="route-point">
                                     <span class="flight-airport"${!flight.arrival_iata && flight.arrival_name ? ' style="font-size:11px;font-style:italic;letter-spacing:0"' : ''}>${flight.arrival_iata || (flight.arrival_name ? flight.arrival_name : '???')}</span>
                                     ${flight.arrival_name && flight.arrival_iata ? `<span class="airport-name">${flight.arrival_name}</span>` : ''}
@@ -507,6 +509,10 @@ const Flights = {
             card.className = 'flight-card';
             card.dataset.id = f.id;
             
+            const ac = this.aircraft.find(a => a.id === f.aircraft_id);
+            const isHelicopter = ac && ac.category === 'helicopter';
+            const arrowIcon = isHelicopter ? '🚁' : '✈';
+            
             // Format pilot-centric telemetry summary stats HUD if present
             let statsHtml = '';
             if (f.summary_stats) {
@@ -577,7 +583,7 @@ const Flights = {
                             <span class="flight-airport"${!f.departure_iata && f.departure_name ? ' style="font-size:11px;font-style:italic;letter-spacing:0"' : ''}>${f.departure_iata || (f.departure_name ? f.departure_name : '???')}</span>
                             ${f.departure_name && f.departure_iata ? `<span class="airport-name">${f.departure_name}</span>` : ''}
                         </div>
-                        <span class="flight-arrow"><span class="flight-arrow-line"></span>✈<span class="flight-arrow-line"></span></span>
+                        <span class="flight-arrow"><span class="flight-arrow-line"></span>${arrowIcon}<span class="flight-arrow-line"></span></span>
                         <div class="route-point">
                             <span class="flight-airport"${!f.arrival_iata && f.arrival_name ? ' style="font-size:11px;font-style:italic;letter-spacing:0"' : ''}>${f.arrival_iata || (f.arrival_name ? f.arrival_name : '???')}</span>
                             ${f.arrival_name && f.arrival_iata ? `<span class="airport-name">${f.arrival_name}</span>` : ''}
@@ -682,6 +688,7 @@ const Flights = {
             icao24_hex: document.getElementById('input-icao24').value.trim() || null,
             aircraft_type: document.getElementById('input-aircraft-type').value.trim() || null,
             airline: document.getElementById('input-airline').value.trim() || null,
+            category: document.getElementById('input-aircraft-category').value,
         };
 
         try {
@@ -726,6 +733,7 @@ const Flights = {
         ['input-tail-number', 'input-icao24', 'input-aircraft-type', 'input-airline'].forEach(id => {
             document.getElementById(id).value = '';
         });
+        document.getElementById('input-aircraft-category').value = 'plane';
         document.getElementById('lookup-result').style.display = 'none';
     },
 
@@ -749,6 +757,7 @@ const Flights = {
         document.getElementById('input-icao24').value = ac.icao24_hex || '';
         document.getElementById('input-aircraft-type').value = ac.aircraft_type || '';
         document.getElementById('input-airline').value = ac.airline || '';
+        document.getElementById('input-aircraft-category').value = ac.category || 'plane';
         
         this._showModal('modal-add-aircraft');
     },
@@ -808,6 +817,7 @@ const Flights = {
             icao24_hex: document.getElementById('input-icao24').value.trim() || null,
             aircraft_type: document.getElementById('input-aircraft-type').value.trim() || null,
             airline: document.getElementById('input-airline').value.trim() || null,
+            category: document.getElementById('input-aircraft-category').value,
         };
 
         try {
@@ -1073,10 +1083,13 @@ const Flights = {
 
     handleWSMessage(msg) {
         if (msg.type === 'position_update') {
+            const ac = this.aircraft.find(a => a.id === msg.aircraft_id);
+            const category = ac ? ac.category : 'plane';
             // Update marker on map
             FlightMap.updateMarker(msg.aircraft_id, {
                 ...msg.data,
                 tail_number: msg.tail_number,
+                category: category,
             });
 
             // Update aircraft card if visible

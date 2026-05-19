@@ -22,6 +22,7 @@ class AircraftCreate(BaseModel):
     aircraft_type: Optional[str] = Field(None, max_length=100)
     airline: Optional[str] = Field(None, max_length=100)
     display_name: Optional[str] = Field(None, max_length=200)
+    category: Optional[str] = Field("plane", description="Category: plane or helicopter")
 
 
 class AircraftUpdate(BaseModel):
@@ -31,6 +32,7 @@ class AircraftUpdate(BaseModel):
     aircraft_type: Optional[str] = Field(None, max_length=100)
     airline: Optional[str] = Field(None, max_length=100)
     display_name: Optional[str] = Field(None, max_length=200)
+    category: Optional[str] = Field(None, description="Category: plane or helicopter")
     active: Optional[bool] = None
 
 
@@ -42,6 +44,7 @@ class AircraftResponse(BaseModel):
     aircraft_type: Optional[str] = None
     airline: Optional[str] = None
     display_name: Optional[str] = None
+    category: str
     photo_url: Optional[str] = None
     active: bool
     created_at: datetime

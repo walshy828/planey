@@ -128,5 +128,34 @@ const Utils = {
             iconAnchor: [16, 16],
             className: 'airplane-marker'
         });
+    },
+
+    /** Create aircraft (airplane or helicopter) SVG icon for map markers */
+    aircraftIcon(heading = 0, color = '#00d4ff', category = 'plane') {
+        if (category === 'helicopter') {
+            const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24">
+                <g style="transform: rotate(${heading || 0}deg); transform-origin: center;">
+                    <!-- Skids -->
+                    <path d="M7 8v9M17 8v9M7 11h3M14 11h3M7 14h3M14 14h3" stroke="${color}" stroke-width="1.5" stroke-linecap="round"/>
+                    <path d="M7 8v9M17 8v9" stroke="#000" stroke-width="0.5" stroke-linecap="round"/>
+                    <!-- Tail boom & rotor -->
+                    <path d="M12 15v6M9 21h6" stroke="${color}" stroke-width="2" stroke-linecap="round"/>
+                    <path d="M12 15v6M9 21h6" stroke="#000" stroke-width="0.5" stroke-linecap="round"/>
+                    <!-- Fuselage -->
+                    <rect x="9" y="7" width="6" height="9" rx="3" fill="${color}" stroke="#000" stroke-width="1" stroke-linejoin="round"/>
+                    <!-- Rotor Blades -->
+                    <path d="M2 11.5h20M12 1.5v20" stroke="${color}" stroke-width="1.2" stroke-linecap="round" opacity="0.8"/>
+                    <!-- Rotor Hub -->
+                    <circle cx="12" cy="11.5" r="1.5" fill="#ffffff" stroke="#000" stroke-width="0.5"/>
+                </g>
+            </svg>`;
+            return L.divIcon({
+                html: svg,
+                iconSize: [32, 32],
+                iconAnchor: [16, 16],
+                className: 'airplane-marker'
+            });
+        }
+        return this.airplaneIcon(heading, color);
     }
 };
