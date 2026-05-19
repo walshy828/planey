@@ -48,7 +48,7 @@ const App = {
 
         // History panel listeners
         document.getElementById('history-aircraft-select').addEventListener('change', () => Flights._loadHistory());
-        document.getElementById('history-hours').addEventListener('change', () => Flights._loadHistory());
+        document.getElementById('history-lookback-select').addEventListener('change', () => Flights._loadHistory());
 
         // Settings
         document.getElementById('btn-settings').addEventListener('click', () => this.showSettings());
