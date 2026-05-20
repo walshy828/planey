@@ -839,6 +839,11 @@ const Flights = {
     },
 
     _showEditFlightModal(id) {
+        if (window.TelemetryAuditor) {
+            window.TelemetryAuditor.open(id);
+            return;
+        }
+
         const f = this.flights.find(fl => fl.id === id);
         if (!f) return;
 

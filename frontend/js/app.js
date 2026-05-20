@@ -57,6 +57,14 @@ const App = {
         document.getElementById('btn-confirm-settings').addEventListener('click', () => this.saveSettings());
         document.getElementById('btn-reconcile-all').addEventListener('click', () => this.triggerReconcileAll());
 
+        // Telemetry Auditor
+        document.getElementById('btn-telemetry-auditor').addEventListener('click', () => {
+            if (window.TelemetryAuditor) window.TelemetryAuditor.open();
+        });
+        document.getElementById('btn-close-auditor').addEventListener('click', () => {
+            if (window.TelemetryAuditor) window.TelemetryAuditor.close();
+        });
+
         console.log('✈ Planey ready');
     },
 

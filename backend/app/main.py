@@ -271,6 +271,10 @@ async def get_stats():
 
 # Mount static frontend files at the very end
 static_dir = Path(__file__).resolve().parent.parent / "static"
+if not static_dir.exists():
+    static_dir = Path(__file__).resolve().parent.parent / "frontend"
 if static_dir.exists():
     app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
     logger.info(f"Serving static files from {static_dir}")
+else:
+    logger.warning("Could not find frontend or static directory to serve static files!")

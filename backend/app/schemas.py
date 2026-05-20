@@ -90,10 +90,22 @@ class FlightUpdate(BaseModel):
     flight_number: Optional[str] = None
     callsign: Optional[str] = None
     departure_iata: Optional[str] = None
+    departure_icao: Optional[str] = None
+    departure_name: Optional[str] = None
+    departure_lat: Optional[float] = None
+    departure_lon: Optional[float] = None
     arrival_iata: Optional[str] = None
+    arrival_icao: Optional[str] = None
+    arrival_name: Optional[str] = None
+    arrival_lat: Optional[float] = None
+    arrival_lon: Optional[float] = None
     scheduled_departure: Optional[datetime] = None
     scheduled_arrival: Optional[datetime] = None
+    actual_departure: Optional[datetime] = None
+    actual_arrival: Optional[datetime] = None
     status: Optional[str] = None
+    summary_stats: Optional[dict] = None
+
 
 
 class FlightResponse(BaseModel):
@@ -171,6 +183,20 @@ class PositionResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class PositionUpdate(BaseModel):
+    """Schema for updating a position report."""
+    flight_id: Optional[uuid.UUID] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    altitude_ft: Optional[float] = None
+    ground_speed_kts: Optional[float] = None
+    heading: Optional[float] = None
+    vertical_rate_fpm: Optional[float] = None
+    on_ground: Optional[bool] = None
+    squawk: Optional[str] = None
+    timestamp: Optional[datetime] = None
 
 
 # =============================================================================

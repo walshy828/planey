@@ -103,11 +103,14 @@ async def get_active_flights(db: AsyncSession = Depends(get_db)):
         )
         positions = pos_result.scalars().all()
 
-        flight_data = FlightWithPositions.model_validate(flight)
-        flight_data.positions = [PositionResponse.model_validate(p) for p in positions]
-        if aircraft:
-            from app.schemas import AircraftResponse
-            flight_data.aircraft = AircraftResponse.model_validate(aircraft)
+        from app.schemas import AircraftResponse
+        flight_resp = FlightResponse.model_validate(flight)
+        flight_data = FlightWithPositions(
+            **flight_resp.model_dump(),
+            positions=[PositionResponse.model_validate(p) for p in positions],
+            aircraft=AircraftResponse.model_validate(aircraft) if aircraft else None,
+            change_history=[]
+        )
         response.append(flight_data)
 
     return response
@@ -238,12 +241,6 @@ async def get_flight(
     )
     positions = pos_result.scalars().all()
 
-    flight_data = FlightWithPositions.model_validate(flight)
-    flight_data.positions = [PositionResponse.model_validate(p) for p in positions]
-    if aircraft:
-        from app.schemas import AircraftResponse
-        flight_data.aircraft = AircraftResponse.model_validate(aircraft)
-
     # Load change history
     history_result = await db.execute(
         select(FlightChangeHistory)
@@ -251,7 +248,15 @@ async def get_flight(
         .order_by(FlightChangeHistory.changed_at.desc())
     )
     history = history_result.scalars().all()
-    flight_data.change_history = [FlightChangeHistoryResponse.model_validate(h) for h in history]
+
+    from app.schemas import AircraftResponse
+    flight_resp = FlightResponse.model_validate(flight)
+    flight_data = FlightWithPositions(
+        **flight_resp.model_dump(),
+        positions=[PositionResponse.model_validate(p) for p in positions],
+        aircraft=AircraftResponse.model_validate(aircraft) if aircraft else None,
+        change_history=[FlightChangeHistoryResponse.model_validate(h) for h in history]
+    )
 
     return flight_data
 
@@ -289,10 +294,15 @@ async def update_flight(
         raise HTTPException(status_code=404, detail="Flight not found")
 
     update_data = update.model_dump(exclude_unset=True)
+    
+    # Record manual_admin changes in FlightChangeHistory
+    from app.models import record_flight_changes
+    await record_flight_changes(flight, update_data, "manual_admin", db)
+
     for field, value in update_data.items():
         setattr(flight, field, value)
 
-    await db.flush()
+    await db.commit()
     await db.refresh(flight)
     return FlightResponse.model_validate(flight)
 

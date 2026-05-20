@@ -56,6 +56,8 @@ const API = {
     // ── Positions ──
     getLatestPositions() { return this.get('/positions/latest'); },
     getPositionHistory(aircraftId, hours = 24) { return this.get(`/positions/${aircraftId}/history?hours=${hours}`); },
+    updatePosition(id, data) { return this.put(`/positions/${id}`, data); },
+    deletePosition(id) { return this.del(`/positions/${id}`); },
 
     // ── Stats & Settings ──
     getStats() { return this.get('/stats'); },

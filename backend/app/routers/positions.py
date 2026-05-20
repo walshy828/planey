@@ -9,13 +9,13 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import Aircraft, Position
-from app.schemas import PositionResponse
+from app.models import Aircraft, Position, Flight
+from app.schemas import PositionResponse, PositionUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -71,3 +71,87 @@ async def get_position_history(
     )
     positions = result.scalars().all()
     return [PositionResponse.model_validate(p) for p in positions]
+
+
+@router.put("/{position_id}", response_model=PositionResponse)
+async def update_position(
+    position_id: int,
+    update_data: PositionUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a specific position record, recalculating flight stats."""
+    # Find the position
+    pos_result = await db.execute(
+        select(Position).where(Position.id == position_id)
+    )
+    pos = pos_result.scalars().first()
+    if not pos:
+        raise HTTPException(status_code=404, detail="Position not found")
+
+    old_flight_id = pos.flight_id
+    new_flight_id = update_data.flight_id
+
+    # Update position fields
+    update_dict = update_data.model_dump(exclude_unset=True)
+    for field, val in update_dict.items():
+        setattr(pos, field, val)
+
+    await db.commit()
+    await db.refresh(pos)
+
+    # Recalculate stats for affected flights
+    flight_ids_to_recalc = set()
+    if old_flight_id:
+        flight_ids_to_recalc.add(old_flight_id)
+    if new_flight_id is not None:
+        flight_ids_to_recalc.add(new_flight_id)
+
+    from app.services.stats_calculator import calculate_flight_stats
+    for fid in flight_ids_to_recalc:
+        flight_result = await db.execute(
+            select(Flight).where(Flight.id == fid)
+        )
+        flight = flight_result.scalars().first()
+        if flight:
+            flight.summary_stats = await calculate_flight_stats(flight, db)
+            db.add(flight)
+
+    await db.commit()
+    await db.refresh(pos)
+    return pos
+
+
+@router.delete("/{position_id}")
+async def delete_position(
+    position_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a specific position record, recalculating flight stats."""
+    # Find the position
+    pos_result = await db.execute(
+        select(Position).where(Position.id == position_id)
+    )
+    pos = pos_result.scalars().first()
+    if not pos:
+        raise HTTPException(status_code=404, detail="Position not found")
+
+    flight_id = pos.flight_id
+
+    # Delete the position
+    await db.delete(pos)
+    await db.commit()
+
+    # Recalculate stats for the flight
+    if flight_id:
+        from app.services.stats_calculator import calculate_flight_stats
+        flight_result = await db.execute(
+            select(Flight).where(Flight.id == flight_id)
+        )
+        flight = flight_result.scalars().first()
+        if flight:
+            flight.summary_stats = await calculate_flight_stats(flight, db)
+            db.add(flight)
+            await db.commit()
+
+    return {"status": "success", "message": "Position deleted successfully"}
+
