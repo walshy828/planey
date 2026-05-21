@@ -59,18 +59,37 @@ class GeocoderService:
 
     async def get_airport_coordinates(self, iata: str) -> Optional[tuple[float, float]]:
         """Attempt to find coordinates for an airport IATA code."""
-        if not iata: return None
+        if not iata:
+            return None
+        iata = iata.strip().upper()
+        headers = {'User-Agent': 'Planey Flight Tracker'}
+
+        # Strategy 1: Search by raw code first and look for class 'aeroway'
         try:
-            url = f"https://nominatim.openstreetmap.org/search?q={iata}+airport&format=json&limit=1"
-            headers = {'User-Agent': 'Planey Flight Tracker'}
+            url = f"https://nominatim.openstreetmap.org/search?q={iata}&format=json&limit=5"
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.get(url, headers=headers)
                 if resp.status_code == 200:
                     data = resp.json()
-                    if data and len(data) > 0:
-                        return float(data[0]['lat']), float(data[0]['lon'])
+                    for item in data:
+                        if item.get('class') == 'aeroway':
+                            return float(item['lat']), float(item['lon'])
         except Exception as e:
-            logger.error(f"Failed to geocode airport {iata}: {e}")
+            logger.error(f"Failed to geocode airport {iata} with raw search: {e}")
+
+        # Strategy 2: Fallback to searching with "+airport" suffix and look for class 'aeroway'
+        try:
+            url = f"https://nominatim.openstreetmap.org/search?q={iata}+airport&format=json&limit=5"
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(url, headers=headers)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    for item in data:
+                        if item.get('class') == 'aeroway':
+                            return float(item['lat']), float(item['lon'])
+        except Exception as e:
+            logger.error(f"Failed to geocode airport {iata} with suffix search: {e}")
+
         return None
 
 # Singleton instance

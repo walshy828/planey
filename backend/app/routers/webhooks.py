@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
-from app.models import Aircraft, Flight, record_flight_changes
+from app.models import Aircraft, Flight, Position, record_flight_changes
 from app.schemas import WebhookFlightFiled, WebhookFlightDeparted, WebhookFlightArrived, FlightResponse
 
 logger = logging.getLogger(__name__)
@@ -503,17 +503,58 @@ async def webhook_flight_arrived(
         dep_coords = await geocoder.get_airport_coordinates(flight.departure_iata)
         if dep_coords:
             flight.departure_lat, flight.departure_lon = dep_coords
-    if flight.arrival_iata and (not flight.arrival_lat or not flight.arrival_lon):
-        arr_coords = await geocoder.get_airport_coordinates(flight.arrival_iata)
+
+    arr_coords = None
+    if flight.arrival_iata:
+        if flight.arrival_lat is not None and flight.arrival_lon is not None:
+            arr_coords = (flight.arrival_lat, flight.arrival_lon)
+        else:
+            arr_coords = await geocoder.get_airport_coordinates(flight.arrival_iata)
+
+    # Validate or fall back to the flight's last known telemetry position
+    last_pos_res = await db.execute(
+        select(Position)
+        .where(Position.flight_id == flight.id)
+        .order_by(Position.timestamp.desc())
+        .limit(1)
+    )
+    last_pos = last_pos_res.scalars().first()
+
+    if last_pos:
+        from app.services.stats_calculator import haversine_distance
         if arr_coords:
-            flight.arrival_lat, flight.arrival_lon = arr_coords
+            # Check distance in NM between geocoded coordinates and the last known telemetry position
+            dist = haversine_distance(arr_coords[0], arr_coords[1], last_pos.latitude, last_pos.longitude)
+            if dist > 50.0:
+                logger.warning(
+                    f"Geocoded arrival coordinates for {flight.arrival_iata} ({arr_coords}) "
+                    f"are {dist:.1f} NM away from last known position ({last_pos.latitude}, {last_pos.longitude}). "
+                    f"Using last known position coordinates instead."
+                )
+                arr_coords = (last_pos.latitude, last_pos.longitude)
+        else:
+            # Geocoding failed entirely, use last known position coordinates as fallback
+            logger.info(
+                f"Geocoding failed for {flight.arrival_iata}. "
+                f"Falling back to last known position coordinates ({last_pos.latitude}, {last_pos.longitude})."
+            )
+            arr_coords = (last_pos.latitude, last_pos.longitude)
+
+    if arr_coords:
+        flight.arrival_lat, flight.arrival_lon = arr_coords
+
+    # Reverse geocode the landing site name if missing
+    if flight.arrival_lat is not None and flight.arrival_lon is not None and not flight.arrival_name:
+        try:
+            flight.arrival_name = await geocoder.get_location_name(flight.arrival_lat, flight.arrival_lon)
+        except Exception as e:
+            logger.error(f"Failed to reverse geocode landing site name: {e}")
 
     # 5. Insert a grounded position update
     dest_lat = flight.arrival_lat
     dest_lon = flight.arrival_lon
 
     if dest_lat and dest_lon:
-        from app.models import Position
         new_pos = Position(
             aircraft_id=aircraft.id,
             flight_id=flight.id,
