@@ -150,6 +150,8 @@ class HomeAssistantService:
         on_ground: bool,
         departure_iata: Optional[str] = None,
         arrival_iata: Optional[str] = None,
+        departure_name: Optional[str] = None,
+        arrival_name: Optional[str] = None,
         scheduled_arrival: Optional[str] = None,
         scheduled_departure: Optional[str] = None,
         flight_status: Optional[str] = None,
@@ -157,33 +159,30 @@ class HomeAssistantService:
     ) -> str:
         """
         Build the sensor state string based on user requirements:
-        - Landed - Last Airport or closest city if no airport
-        - Planned - destination of planed flight and planned date/time of departure
-        - Airborne - Destination and arrival time
+        1. Planned: "Planned - {arrival_name or arrival_iata}" or "Planned"
+        2. Ground: "ground - {arrival_name}" or "ground - {location_name}" or "ground"
+        3. Flight (Airborne): "Flight - {arrival_name or arrival_iata}" or "Flight - VFR"
         """
-        from datetime import datetime
-
-        def format_time(ts):
-            if not ts: return ""
-            try:
-                dt = datetime.fromisoformat(ts) if isinstance(ts, str) else ts
-                return dt.strftime('%Y-%m-%d %H:%M')
-            except:
-                return ""
-
+        # 1. Planned/Scheduled Status
         if flight_status == "scheduled":
-            dest = arrival_iata or "Unknown Destination"
-            time_str = format_time(scheduled_departure)
-            return f"Planned - {dest}" + (f" @ {time_str}" if time_str else "")
+            dest = arrival_name or arrival_iata
+            if dest:
+                return f"Planned - {dest}"
+            return "Planned"
 
+        # 2. Ground Status
         if on_ground:
-            loc = arrival_iata or departure_iata or location_name or "Unknown Location"
-            return f"Landed - {loc}"
+            if arrival_name:
+                return f"ground - {arrival_name}"
+            elif location_name:
+                return f"ground - {location_name}"
+            return "ground"
 
-        # Otherwise Airborne
-        dest = arrival_iata or "Unknown Destination"
-        time_str = format_time(scheduled_arrival)
-        return f"Airborne - {dest}" + (f" ETA {time_str}" if time_str else "")
+        # 3. Flight/Airborne Status
+        dest = arrival_name or arrival_iata
+        if not dest:
+            return "Flight - VFR"
+        return f"Flight - {dest}"
 
 
     async def remove_aircraft_sensor(self, tail_number: str):

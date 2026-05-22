@@ -709,6 +709,8 @@ class TrackerService:
             on_ground=position.on_ground,
             departure_iata=flight.departure_iata if flight else None,
             arrival_iata=flight.arrival_iata if flight else None,
+            departure_name=flight.departure_name if flight else None,
+            arrival_name=flight.arrival_name if flight else None,
             scheduled_arrival=flight.scheduled_arrival if flight else None,
             scheduled_departure=flight.scheduled_departure if flight else None,
             flight_status=flight.status if flight else None,
@@ -730,9 +732,17 @@ class TrackerService:
         if active_flight:
             flight_data = {
                 "flight_number": active_flight.flight_number,
-                "arrival_iata": active_flight.arrival_iata,
+                "callsign": active_flight.callsign,
                 "departure_iata": active_flight.departure_iata,
+                "departure_name": active_flight.departure_name,
+                "arrival_iata": active_flight.arrival_iata,
+                "arrival_name": active_flight.arrival_name,
+                "scheduled_departure": active_flight.scheduled_departure.isoformat() if active_flight.scheduled_departure else None,
                 "scheduled_arrival": active_flight.scheduled_arrival.isoformat() if active_flight.scheduled_arrival else None,
+                "actual_departure": active_flight.actual_departure.isoformat() if active_flight.actual_departure else None,
+                "actual_arrival": active_flight.actual_arrival.isoformat() if active_flight.actual_arrival else None,
+                "aircraft_type": aircraft.aircraft_type,
+                "airline": aircraft.airline,
                 "status": active_flight.status,
             }
 
@@ -740,11 +750,14 @@ class TrackerService:
                 on_ground=True,
                 departure_iata=active_flight.departure_iata,
                 arrival_iata=active_flight.arrival_iata,
+                departure_name=active_flight.departure_name,
+                arrival_name=active_flight.arrival_name,
                 scheduled_arrival=active_flight.scheduled_arrival,
+                scheduled_departure=active_flight.scheduled_departure,
                 flight_status=active_flight.status,
             )
         else:
-            status_str = "ground - unknown"
+            status_str = ha_service.build_status_string(on_ground=True)
 
         await ha_service.update_aircraft_sensor(
             tail_number=aircraft.tail_number,

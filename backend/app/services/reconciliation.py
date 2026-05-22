@@ -344,6 +344,8 @@ class ReconciliationService:
             on_ground=True, # force on ground
             departure_iata=flight.departure_iata,
             arrival_iata=flight.arrival_iata,
+            departure_name=flight.departure_name,
+            arrival_name=flight.arrival_name,
             scheduled_arrival=flight.scheduled_arrival.isoformat() if flight.scheduled_arrival else None,
             scheduled_departure=flight.scheduled_departure.isoformat() if flight.scheduled_departure else None,
             flight_status=flight.status,
@@ -582,9 +584,15 @@ class ReconciliationService:
             db.add(new_pos)
             
             # Update Home Assistant
+            status_str = ha_service.build_status_string(
+                on_ground=True,
+                arrival_name=arrival_name,
+                arrival_iata=arrival_iata,
+                location_name=latest_pos.location_name if latest_pos else None
+            )
             await ha_service.update_aircraft_sensor(
                 tail_number=aircraft.tail_number,
-                status="Landed",
+                status=status_str,
                 flight_data=None,
                 position_data={"on_ground": True}
             )
