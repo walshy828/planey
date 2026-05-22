@@ -547,7 +547,12 @@
                         <div id="auditor-workspace" style="display: none; height: 100%; flex-direction: column; overflow: hidden; flex: 1;">
                             <!-- Top Pane: Flight Metadata Form -->
                             <div class="auditor-flight-details-pane">
-                                <h3 style="font-size: 14px; font-weight: 600; margin-bottom: 12px; color: var(--text-primary);">Flight Details & Metadata</h3>
+                                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+                                    <h3 style="font-size: 14px; font-weight: 600; margin: 0; color: var(--text-primary);">Flight Details & Metadata</h3>
+                                    <button type="button" class="btn-ghost btn-back-to-list" style="padding: 4px 8px; font-size: 11px;" onclick="TelemetryAuditor.resetWorkspace()">
+                                        ← Back to Flights
+                                    </button>
+                                </div>
                                 <form id="auditor-flight-form" style="display: flex; flex-direction: column; gap: 12px;">
                                     <div class="form-row">
                                         <div class="form-group">
@@ -665,6 +670,7 @@
                                                 <th class="sortable" data-field="ground_speed_kts" style="cursor: pointer; user-select: none;">Speed (kts) <span class="sort-icon"></span></th>
                                                 <th class="sortable" data-field="heading" style="cursor: pointer; user-select: none;">Heading (°) <span class="sort-icon"></span></th>
                                                 <th class="sortable" data-field="vertical_rate_fpm" style="cursor: pointer; user-select: none;">V-Rate (fpm) <span class="sort-icon"></span></th>
+                                                <th class="sortable" data-field="source" style="cursor: pointer; user-select: none;">Source <span class="sort-icon"></span></th>
                                                 <th class="sortable" data-field="status" style="cursor: pointer; user-select: none;">Status/Issues <span class="sort-icon"></span></th>
                                                 <th style="width: 140px; text-align: right;">Actions</th>
                                             </tr>

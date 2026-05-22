@@ -41,6 +41,10 @@ const TelemetryAuditor = {
     resetWorkspace() {
         document.getElementById('auditor-workspace').style.display = 'none';
         document.getElementById('auditor-main-empty').style.display = 'flex';
+        const container = document.querySelector('.auditor-container');
+        if (container) {
+            container.classList.remove('flight-selected');
+        }
     },
 
     initListeners() {
@@ -171,6 +175,10 @@ const TelemetryAuditor = {
 
         document.getElementById('auditor-main-empty').style.display = 'none';
         document.getElementById('auditor-workspace').style.display = 'flex';
+        const container = document.querySelector('.auditor-container');
+        if (container) {
+            container.classList.add('flight-selected');
+        }
 
         this.sortField = 'timestamp';
         this.sortOrder = 'desc';
@@ -308,7 +316,7 @@ const TelemetryAuditor = {
         badge.textContent = `${positions.length} reports`;
 
         if (positions.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; padding: 30px; color: var(--text-secondary);">No position logs for this flight.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 30px; color: var(--text-secondary);">No position logs for this flight.</td></tr>';
             return;
         }
 
@@ -339,6 +347,10 @@ const TelemetryAuditor = {
             } else if (this.sortField === 'status') {
                 valA = anomalies[a.id]?.row.length || 0;
                 valB = anomalies[b.id]?.row.length || 0;
+            } else if (this.sortField === 'source') {
+                valA = a.source || '';
+                valB = b.source || '';
+                return this.sortOrder === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
             } else {
                 valA = a[this.sortField];
                 valB = b[this.sortField];
@@ -371,6 +383,10 @@ const TelemetryAuditor = {
                 ? `<span class="anomaly-badge" title="${pAnomaly.row.map(r => `${r}: ${pAnomaly.fields.ground_speed_kts || pAnomaly.fields.altitude_ft || pAnomaly.fields.latitude || ''}`).join(', ')}">Anomaly: ${pAnomaly.row.join(', ')}</span>`
                 : `<span style="color: var(--green); font-weight: 500;">Valid</span>`;
 
+            const sourceBadge = p.source 
+                ? `<span class="source-badge source-${p.source.toLowerCase()}">${p.source}</span>` 
+                : `<span class="source-badge">N/A</span>`;
+
             tr.innerHTML = `
                 <td>${timeStr}</td>
                 ${getTd(p.latitude.toFixed(5), 'latitude')}
@@ -379,6 +395,7 @@ const TelemetryAuditor = {
                 ${getTd(p.ground_speed_kts ? Math.round(p.ground_speed_kts) : 0, 'ground_speed_kts')}
                 <td>${p.heading !== null ? Math.round(p.heading) : 'N/A'}</td>
                 ${getTd(p.vertical_rate_fpm ? p.vertical_rate_fpm.toLocaleString() : 0, 'vertical_rate_fpm')}
+                <td>${sourceBadge}</td>
                 <td>${statusContent}</td>
                 <td style="text-align: right; white-space: nowrap;">
                     <button class="btn-ghost" style="padding: 2px 6px; font-size: 11px; margin-right: 4px;" onclick="TelemetryAuditor.editPosition(${p.id})">Edit</button>
@@ -475,8 +492,11 @@ const TelemetryAuditor = {
         overlay.id = 'edit-pos-popover';
 
         overlay.innerHTML = `
-            <div class="modal" style="max-width: 400px; padding: 20px; animation: slideUp 0.2s ease;">
-                <h3 style="margin-bottom: 16px; font-weight: 600;">Edit Position Report #${p.id}</h3>
+            <div class="modal">
+                <h3 style="margin-bottom: 16px; font-weight: 600; display: flex; justify-content: space-between; align-items: center;">
+                    <span>Edit Position Report #${p.id}</span>
+                    <span class="source-badge source-${(p.source || 'n/a').toLowerCase()}">${p.source || 'N/A'}</span>
+                </h3>
                 <form id="edit-pos-form" style="display: flex; flex-direction: column; gap: 12px;">
                     <div style="display: flex; gap: 10px;">
                         <div class="form-group" style="flex: 1;">
@@ -507,6 +527,10 @@ const TelemetryAuditor = {
                             <label style="font-size: 11px;">Vertical Rate (fpm)</label>
                             <input type="number" id="edit-vrate" class="input-field" value="${p.vertical_rate_fpm || ''}">
                         </div>
+                    </div>
+                    <div class="form-group">
+                        <label style="font-size: 11px;">Report Source</label>
+                        <input type="text" class="input-field" value="${p.source ? p.source.toUpperCase() : 'N/A'}" readonly style="background: rgba(255,255,255,0.02); color: var(--text-secondary); cursor: not-allowed; font-family: var(--mono); font-size: 11px; letter-spacing: 0.5px;">
                     </div>
                     <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px;">
                         <button type="button" class="btn-ghost" onclick="document.getElementById('edit-pos-popover').remove()">Cancel</button>
