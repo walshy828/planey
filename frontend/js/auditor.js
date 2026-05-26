@@ -63,6 +63,10 @@ const TelemetryAuditor = {
             this.saveFlightDetails();
         };
 
+        // Merge button
+        const mergeBtn = document.getElementById('btn-merge-flight-audit');
+        mergeBtn.onclick = () => this.mergeIntoFlight();
+
         // Table header sorting click delegation
         const tableHeader = document.querySelector('.auditor-table thead');
         if (tableHeader) {
@@ -260,6 +264,8 @@ const TelemetryAuditor = {
             const el = document.getElementById(`audit-tz-label-${n}`);
             if (el) el.textContent = tzLabel;
         });
+        const colLabel = document.getElementById('auditor-tz-col-label');
+        if (colLabel) colLabel.textContent = tzLabel;
         
         document.getElementById('audit-route').value = f.expected_route || '';
 
@@ -606,6 +612,89 @@ const TelemetryAuditor = {
             console.error("Failed to delete position:", err);
             Utils.toast(`Error: ${err.message}`, 'error');
         }
+    },
+
+    async mergeIntoFlight() {
+        if (!this.selectedFlightId) return;
+
+        // Fetch flights for the same aircraft (excluding current)
+        const currentFlight = this.currentFlight;
+        if (!currentFlight) return;
+
+        let candidates = [];
+        try {
+            const all = await API.getFlights({ limit: 150 });
+            candidates = all.filter(f => f.aircraft_id === currentFlight.aircraft_id && f.id !== this.selectedFlightId);
+        } catch (err) {
+            Utils.toast('Failed to load flights for merge', 'error');
+            return;
+        }
+
+        if (candidates.length === 0) {
+            Utils.toast('No other flights found for this aircraft.', 'info');
+            return;
+        }
+
+        // Sort: most recent first
+        candidates.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+        let optionsHtml = candidates.map(f => {
+            const route = `${f.departure_iata || '???'} → ${f.arrival_iata || '???'}`;
+            const label = `${f.flight_number || f.callsign || 'Unknown'} (${route}) · ${f.status} · ${Utils.formatDateShort(f.created_at)}`;
+            return `<option value="${f.id}">${label}</option>`;
+        }).join('');
+
+        const overlay = document.createElement('div');
+        overlay.className = 'popover-overlay';
+        overlay.id = 'merge-flight-popover';
+
+        const currentLabel = `${currentFlight.flight_number || currentFlight.callsign || 'this flight'} (${currentFlight.departure_iata || '???'} → ${currentFlight.arrival_iata || '???'})`;
+
+        overlay.innerHTML = `
+            <div class="modal" style="max-width: 480px; padding: 20px; animation: slideUp 0.2s ease;">
+                <h3 style="margin-bottom: 12px; font-weight: 600;">Merge Flight</h3>
+                <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 16px; line-height: 1.5;">
+                    All positions from <strong style="color: var(--text-primary);">${currentLabel}</strong> will be moved into the selected target flight, then this flight will be deleted.
+                    Use this to clean up a duplicate flight created by a restart mid-leg.
+                </p>
+                <form id="merge-flight-form" style="display: flex; flex-direction: column; gap: 16px;">
+                    <div class="form-group">
+                        <label style="font-size: 11px;">Merge positions INTO</label>
+                        <select id="merge-target-select" class="select-input" style="height: auto; padding: 8px;">
+                            ${optionsHtml}
+                        </select>
+                    </div>
+                    <div style="padding: 10px; background: rgba(255,160,0,0.08); border: 1px solid rgba(255,160,0,0.3); border-radius: 6px; font-size: 11px; color: var(--text-secondary); line-height: 1.5;">
+                        This action is <strong style="color: var(--text-primary);">irreversible</strong>. The current flight record will be permanently deleted after its positions are transferred.
+                    </div>
+                    <div style="display: flex; justify-content: flex-end; gap: 8px;">
+                        <button type="button" class="btn-ghost" onclick="document.getElementById('merge-flight-popover').remove()">Cancel</button>
+                        <button type="submit" class="btn-primary" style="background: var(--accent);">Merge & Delete</button>
+                    </div>
+                </form>
+            </div>
+        `;
+
+        document.body.appendChild(overlay);
+
+        document.getElementById('merge-flight-form').onsubmit = async (e) => {
+            e.preventDefault();
+            const targetId = document.getElementById('merge-target-select').value;
+            if (!targetId) return;
+
+            try {
+                // Merge current flight INTO the selected target
+                await API.mergeFlights(targetId, this.selectedFlightId);
+                Utils.toast('Flights merged successfully. Positions transferred and flight deleted.', 'success');
+                overlay.remove();
+
+                // Navigate to the target flight
+                await this.loadFlights();
+                this.selectFlight(targetId);
+            } catch (err) {
+                Utils.toast(`Merge failed: ${err.message}`, 'error');
+            }
+        };
     },
 
     async reassignPosition(posId) {

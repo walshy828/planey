@@ -711,7 +711,10 @@
                                         <div id="flight-audit-stats-summary" style="font-size: 11px; color: var(--text-secondary);">
                                             <!-- Stats summarized here -->
                                         </div>
-                                        <button type="button" class="btn-primary" id="btn-save-flight-audit" style="padding: 6px 16px; font-size: 12px;">Save Details</button>
+                                        <div style="display: flex; gap: 8px;">
+                                            <button type="button" class="btn-ghost" id="btn-merge-flight-audit" style="padding: 6px 12px; font-size: 12px; color: var(--accent);">Merge into…</button>
+                                            <button type="button" class="btn-primary" id="btn-save-flight-audit" style="padding: 6px 16px; font-size: 12px;">Save Details</button>
+                                        </div>
                                     </div>
                                 </form>
                             </div>
@@ -726,7 +729,7 @@
                                     <table class="auditor-table">
                                         <thead>
                                             <tr>
-                                                <th class="sortable" data-field="timestamp" style="cursor: pointer; user-select: none;">Timestamp (UTC) <span class="sort-icon"></span></th>
+                                                <th class="sortable" data-field="timestamp" style="cursor: pointer; user-select: none;">Timestamp (<span id="auditor-tz-col-label"></span>) <span class="sort-icon"></span></th>
                                                 <th class="sortable" data-field="latitude" style="cursor: pointer; user-select: none;">Latitude <span class="sort-icon"></span></th>
                                                 <th class="sortable" data-field="longitude" style="cursor: pointer; user-select: none;">Longitude <span class="sort-icon"></span></th>
                                                 <th class="sortable" data-field="altitude_ft" style="cursor: pointer; user-select: none;">Altitude (ft) <span class="sort-icon"></span></th>

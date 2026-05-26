@@ -337,6 +337,28 @@ async def reconcile_flight_endpoint(
         raise HTTPException(status_code=500, detail=f"Reconciliation failed: {e}")
 
 
+@router.post("/{flight_id}/merge/{source_flight_id}")
+async def merge_flights_endpoint(
+    flight_id: uuid.UUID,
+    source_flight_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Merge source_flight_id positions into flight_id and delete the source.
+
+    Useful for cleaning up duplicate flights created when a restart interrupted
+    an active leg: merge the stub auto-created after restart back into the
+    original flight.
+    """
+    from app.services.reconciliation import reconciliation_service
+    try:
+        result = await reconciliation_service.merge_flights(str(flight_id), str(source_flight_id), db)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Merge failed: {e}")
+
+
 @router.get("/{flight_id}/history", response_model=list[FlightChangeHistoryResponse])
 async def get_flight_history(
     flight_id: uuid.UUID,

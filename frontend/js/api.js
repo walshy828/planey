@@ -52,6 +52,7 @@ const API = {
     getFlightPositions(id) { return this.get(`/flights/${id}/positions`); },
     updateFlight(id, data) { return this.put(`/flights/${id}`, data); },
     deleteFlight(id) { return this.del(`/flights/${id}`); },
+    mergeFlights(targetId, sourceId) { return this.post(`/flights/${targetId}/merge/${sourceId}`, {}); },
 
     // ── Positions ──
     getLatestPositions() { return this.get('/positions/latest'); },

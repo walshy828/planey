@@ -151,13 +151,17 @@ async def lifespan(app: FastAPI):
     scheduler.start()
     logger.info(f"Scheduler started - polling every {poll_interval}s")
 
-    # Trigger background reconciliation sweep on startup
+    # Trigger background reconciliation sweep on startup.
+    # Uses a 10-minute recency guard: flights with a recent airborne position are skipped
+    # to avoid falsely closing a flight that was active right before the restart.
     async def run_startup_reconciliation():
         await asyncio.sleep(5)  # Let application startup fully
-        logger.info("Running startup reconciliation sweep...")
+        logger.info("Running startup reconciliation sweep (recency guard: 10 min)...")
         try:
             async with async_session() as session:
-                res = await reconciliation_service.reconcile_all_active_flights(session)
+                res = await reconciliation_service.reconcile_all_active_flights(
+                    session, skip_if_recent_minutes=10
+                )
                 logger.info(f"Startup reconciliation sweep completed: {res}")
         except Exception as startup_err:
             logger.error(f"Failed to run startup reconciliation sweep: {startup_err}")

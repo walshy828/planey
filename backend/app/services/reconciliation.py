@@ -604,19 +604,55 @@ class ReconciliationService:
             
         return {"status": "skipped", "message": "External source says aircraft is still active"}
 
-    async def reconcile_all_active_flights(self, db: AsyncSession) -> dict:
-        """Manually reconcile all active and scheduled flights on demand, plus stuck airborne aircraft."""
+    async def reconcile_all_active_flights(self, db: AsyncSession, skip_if_recent_minutes: int = 0) -> dict:
+        """Reconcile all active and scheduled flights on demand, plus stuck airborne aircraft.
+
+        skip_if_recent_minutes: if > 0, skip any flight whose last position report is fresher
+        than this many minutes and not on_ground.  Used by the startup sweep to avoid
+        closing flights that were clearly airborne moments before the restart.
+        """
+        from app.models import Position
+
         # Find all active or scheduled flights
         result = await db.execute(
             select(Flight).where(Flight.status.in_(["scheduled", "active"]))
         )
         open_flights = result.scalars().all()
-        
-        logger.info(f"Manual reconciliation triggered for {len(open_flights)} open flights")
-        
+
+        logger.info(f"Reconciliation triggered for {len(open_flights)} open flights "
+                    f"(skip_if_recent_minutes={skip_if_recent_minutes})")
+
         results = []
         for flight in open_flights:
             try:
+                # Recency guard: skip flights with a recent airborne position
+                if skip_if_recent_minutes > 0:
+                    cutoff = datetime.now(timezone.utc) - timedelta(minutes=skip_if_recent_minutes)
+                    pos_res = await db.execute(
+                        select(Position)
+                        .where(Position.flight_id == flight.id)
+                        .order_by(Position.timestamp.desc())
+                        .limit(1)
+                    )
+                    last_pos = pos_res.scalars().first()
+                    if last_pos:
+                        last_ts = last_pos.timestamp
+                        if last_ts.tzinfo is None:
+                            last_ts = last_ts.replace(tzinfo=timezone.utc)
+                        if last_ts >= cutoff and not last_pos.on_ground:
+                            logger.info(
+                                f"Skipping reconciliation for flight {flight.flight_number or flight.id}: "
+                                f"last position {last_ts} is within {skip_if_recent_minutes} min recency guard."
+                            )
+                            results.append({
+                                "flight_id": str(flight.id),
+                                "flight_number": flight.flight_number,
+                                "callsign": flight.callsign,
+                                "status": "skipped",
+                                "message": f"Recent airborne position ({last_ts}); skipped by recency guard"
+                            })
+                            continue
+
                 res = await self.reconcile_flight(str(flight.id), db)
                 results.append({
                     "flight_id": str(flight.id),
@@ -690,6 +726,140 @@ class ReconciliationService:
             "total_checked": len(open_flights),
             "total_aircraft_checked": len(stuck_aircraft),
             "results": results
+        }
+
+
+    async def merge_flights(self, target_id: str, source_id: str, db: AsyncSession) -> dict:
+        """
+        Merge source flight into target flight.
+
+        All positions from source are reassigned to target.  Target's timestamps,
+        status, and summary stats are updated to reflect the combined data.
+        Source flight is then deleted.
+
+        Typical use-case: app restart caused an active flight to be closed and a
+        new flight to be auto-created; this merges the two halves back into one.
+        """
+        from app.models import Position, record_flight_changes
+        from sqlalchemy import update as sa_update
+
+        # Load both flights
+        t_res = await db.execute(select(Flight).where(Flight.id == target_id))
+        target = t_res.scalars().first()
+        if not target:
+            raise ValueError(f"Target flight {target_id} not found")
+
+        s_res = await db.execute(select(Flight).where(Flight.id == source_id))
+        source = s_res.scalars().first()
+        if not source:
+            raise ValueError(f"Source flight {source_id} not found")
+
+        if target.id == source.id:
+            raise ValueError("Target and source flight must be different")
+
+        if target.aircraft_id != source.aircraft_id:
+            raise ValueError("Cannot merge flights from different aircraft")
+
+        # Reassign all positions from source → target
+        await db.execute(
+            sa_update(Position)
+            .where(Position.flight_id == source.id)
+            .values(flight_id=target.id)
+            .execution_options(synchronize_session=False)
+        )
+
+        # Also adopt any orphaned positions for this aircraft that might sit
+        # between the two flights' timestamps
+        combined_start = min(
+            t for t in [
+                target.actual_departure, target.scheduled_departure,
+                source.actual_departure, source.scheduled_departure,
+            ] if t is not None
+        )
+        combined_end = datetime.now(timezone.utc)
+
+        start_naive = combined_start.replace(tzinfo=None) if combined_start.tzinfo else combined_start
+        await db.execute(
+            sa_update(Position)
+            .where(
+                Position.aircraft_id == target.aircraft_id,
+                Position.flight_id.is_(None),
+                Position.timestamp >= start_naive,
+                Position.timestamp <= combined_end.replace(tzinfo=None),
+            )
+            .values(flight_id=target.id)
+            .execution_options(synchronize_session=False)
+        )
+
+        # Merge timestamps: keep earliest departure, latest arrival
+        def _tz(dt):
+            if dt is None:
+                return None
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+        all_deps = [_tz(t) for t in [target.actual_departure, source.actual_departure] if t]
+        all_arrs = [_tz(t) for t in [target.actual_arrival, source.actual_arrival] if t]
+
+        if all_deps:
+            target.actual_departure = min(all_deps)
+        if all_arrs:
+            target.actual_arrival = max(all_arrs)
+
+        # Inherit the later flight's arrival metadata if the source is newer
+        source_arr = _tz(source.actual_arrival)
+        target_arr = _tz(target.actual_arrival)
+        if source_arr and (not target_arr or source_arr > target_arr):
+            if source.arrival_iata:
+                target.arrival_iata = source.arrival_iata
+            if source.arrival_icao:
+                target.arrival_icao = source.arrival_icao
+            if source.arrival_name:
+                target.arrival_name = source.arrival_name
+            if source.arrival_lat:
+                target.arrival_lat = source.arrival_lat
+            if source.arrival_lon:
+                target.arrival_lon = source.arrival_lon
+
+        # If the source was still active when merged, keep target active too
+        if source.status == "active" or target.status == "active":
+            target.status = "active"
+            target.actual_arrival = None
+        elif source.status == "landed" or target.status == "landed":
+            target.status = "landed"
+
+        # Inherit flight number / callsign from whichever has richer data
+        if not target.flight_number and source.flight_number:
+            target.flight_number = source.flight_number
+        if not target.callsign and source.callsign:
+            target.callsign = source.callsign
+
+        # Log the merge
+        await record_flight_changes(
+            target,
+            {"merged_from": str(source.id), "source_flight_number": source.flight_number},
+            "merge",
+            db,
+        )
+
+        # Recalculate summary stats
+        try:
+            from app.services.stats_calculator import calculate_flight_stats
+            target.summary_stats = await calculate_flight_stats(target, db)
+        except Exception as e:
+            logger.warning(f"Stats recalculation after merge failed: {e}")
+
+        # Delete source flight (positions already reassigned)
+        await db.delete(source)
+        await db.commit()
+
+        logger.info(
+            f"Merged flight {source_id} ({source.flight_number}) into "
+            f"{target_id} ({target.flight_number}). Status: {target.status}"
+        )
+        return {
+            "status": "success",
+            "target_flight_id": str(target.id),
+            "positions_merged": True,
         }
 
 
