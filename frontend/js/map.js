@@ -11,6 +11,7 @@ const FlightMap = {
     airportMarkers: {}, // iata → L.circleMarker
     showTrails: true,
     _tileLayers: null,
+    _labelsOverlay: null,
     _currentLayerName: 'dark',
 
     _layerDefs: {
@@ -46,6 +47,12 @@ const FlightMap = {
         }
         this._tileLayers.dark.addTo(this.map);
 
+        // Transparent labels overlay for satellite view (towns, rivers, airports, POIs)
+        this._labelsOverlay = L.tileLayer(
+            'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+            { maxZoom: 19, opacity: 1 }
+        );
+
         // Attribution control (updated on layer switch)
         this._attribution = L.control.attribution({ prefix: false, position: 'bottomleft' });
         this._attribution.addTo(this.map);
@@ -77,8 +84,15 @@ const FlightMap = {
         this._currentLayerName = name;
         this._tileLayers[name].addTo(this.map);
 
-        // Satellite view: lighten trail colors so they read against imagery
+        // Add/remove the labels overlay for satellite (dark/light have built-in labels)
         const isSatellite = name === 'satellite';
+        if (isSatellite) {
+            this._labelsOverlay.addTo(this.map);
+        } else {
+            this._labelsOverlay.remove();
+        }
+
+        // Satellite view: lighten trail colors so they read against imagery
         Object.values(this.trails).forEach(segs =>
             segs.forEach(seg => seg.setStyle({ weight: isSatellite ? 3 : 4, opacity: isSatellite ? 0.95 : 0.8 }))
         );
