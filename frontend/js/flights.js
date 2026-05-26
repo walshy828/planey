@@ -1286,19 +1286,25 @@ const Flights = {
         if (msg.type === 'position_update') {
             const ac = this.aircraft.find(a => a.id === msg.aircraft_id);
             const category = ac ? ac.category : 'plane';
-            // Update marker on map
+
+            // Update map marker immediately
             FlightMap.updateMarker(msg.aircraft_id, {
                 ...msg.data,
                 tail_number: msg.tail_number,
                 category: category,
             });
 
-            // Update aircraft card if visible
+            // Patch in-memory position so any subsequent full re-render uses fresh data
+            if (ac) {
+                ac.latest_position = { ...(ac.latest_position || {}), ...msg.data };
+            }
+
+            // Update aircraft card telemetry in-place
             const card = document.querySelector(`.aircraft-card[data-id="${msg.aircraft_id}"]`);
             if (card) {
-                // Subtle pulse animation
                 card.style.borderColor = 'var(--accent)';
                 setTimeout(() => { card.style.borderColor = ''; }, 1000);
+                this._updateCardTelemetry(card, msg.data);
             }
         } else if (msg.type === 'flight_status') {
             Utils.toast(`Flight status: ${msg.old_status} → ${msg.new_status}`, 'info');
@@ -1306,6 +1312,41 @@ const Flights = {
             this.loadFlights();
         } else if (msg.type === 'tracker_status') {
             this._updateTrackerUI(msg);
+        }
+    },
+
+    _updateCardTelemetry(card, pos) {
+        const telemEl = card.querySelector('.ac-telemetry');
+        if (!telemEl) return; // Card not in airborne state — structural changes handled by flight_status
+
+        const altStr = pos.altitude_ft != null
+            ? (pos.altitude_ft >= 18000
+                ? `FL${Math.round(pos.altitude_ft / 100)}`
+                : `${Math.round(pos.altitude_ft).toLocaleString()} ft`)
+            : '—';
+
+        const vals = telemEl.querySelectorAll('.ac-telem-val');
+        if (vals.length >= 4) {
+            vals[0].textContent = altStr;
+            vals[1].textContent = Utils.formatSpeed(pos.ground_speed_kts);
+            vals[2].textContent = Utils.formatHeading(pos.heading);
+            vals[3].textContent = Utils.formatVRate(pos.vertical_rate_fpm);
+        }
+
+        const liveTime = telemEl.querySelector('.live-time-ago');
+        if (liveTime && pos.timestamp) {
+            liveTime.dataset.timestamp = pos.timestamp;
+            liveTime.textContent = Utils.timeAgo(pos.timestamp);
+        }
+
+        const squawkEl = telemEl.querySelector('.ac-squawk');
+        if (pos.squawk && !squawkEl) {
+            const footer = telemEl.querySelector('.ac-telem-footer');
+            if (footer) footer.insertAdjacentHTML('beforeend', `<span class="ac-squawk">Squawk ${pos.squawk}</span>`);
+        } else if (!pos.squawk && squawkEl) {
+            squawkEl.remove();
+        } else if (squawkEl && pos.squawk) {
+            squawkEl.textContent = `Squawk ${pos.squawk}`;
         }
     }
 };

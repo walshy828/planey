@@ -210,7 +210,7 @@ const FlightMap = {
 
             // Tooltip (Hover)
             marker.bindTooltip(this._tooltipHtml(data), {
-                className: 'flight-tooltip',
+                className: 'trail-tooltip',
                 direction: 'top',
                 offset: [0, -15],
                 sticky: false
@@ -502,7 +502,7 @@ const FlightMap = {
         `;
     },
 
-    _trailTooltipHtml(pos) {
+    _trailTooltipHtml(pos, timeLabel = null) {
         const phase = Utils.flightPhase(pos.vertical_rate_fpm, pos.on_ground);
         const fl = Utils.flightLevel(pos.altitude_ft);
         const altColor = Utils.altitudeColor(pos.altitude_ft);
@@ -526,9 +526,13 @@ const FlightMap = {
                 </span>
             </div>` : '';
 
+        const timeHtml = timeLabel !== null
+            ? timeLabel
+            : Utils.formatDateTimeSecs(pos.timestamp);
+
         return `<div class="track-tooltip">
             <div class="tt-header">
-                <span class="tt-time">${Utils.formatDateTimeSecs(pos.timestamp)}</span>
+                <span class="tt-time">${timeHtml}</span>
                 <span class="tt-phase ${phase.cls}">${phase.arrow}${phase.arrow ? ' ' : ''}${phase.label}</span>
             </div>
             <div class="tt-grid">
@@ -556,17 +560,9 @@ const FlightMap = {
     },
 
     _tooltipHtml(data) {
-        return `
-            <div style="line-height:1.2">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">
-                    <span style="font-weight:bold;color:#00d4ff;">${data.tail_number}${data.category === 'helicopter' ? ' 🚁' : ''}</span>
-                    ${data.timestamp ? `<span class="live-time-ago" data-timestamp="${data.timestamp}" style="font-size:9px;color:#8899aa;margin-left:8px;">${Utils.timeAgo(data.timestamp)}</span>` : ''}
-                </div>
-                <div style="font-size:11px">
-                    ${Utils.formatAlt(data.altitude_ft)} | ${Utils.formatSpeed(data.ground_speed_kts)}<br/>
-                    ${Utils.formatHeading(data.heading)} | ${Utils.formatVRate(data.vertical_rate_fpm)}
-                </div>
-            </div>
-        `;
+        const timeLabel = data.timestamp
+            ? `<span class="live-time-ago" data-timestamp="${data.timestamp}">${Utils.timeAgo(data.timestamp)}</span>`
+            : '—';
+        return this._trailTooltipHtml(data, timeLabel);
     }
 };
