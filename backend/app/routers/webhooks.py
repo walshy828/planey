@@ -212,7 +212,7 @@ async def webhook_flight_departed(
             payload.departure_iata and recent_landed.arrival_iata
             and payload.departure_iata == recent_landed.arrival_iata
         )
-        if same_airport and 0 < gap_minutes < 30:
+        if same_airport and 0 < gap_minutes < 45:
             logger.info(
                 f"Fuel stop detected: {aircraft.tail_number} landed at "
                 f"{recent_landed.arrival_iata} {gap_minutes:.0f}min ago, now departing same airport. "

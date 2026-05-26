@@ -67,6 +67,61 @@ const Utils = {
         return `<span class="badge ${cls[status] || 'badge-ground'}">${status}</span>`;
     },
 
+    /**
+     * Generate a meaningful flight display name, falling back gracefully
+     * when no official flight number exists (common for private aircraft).
+     */
+    flightName(flight, tailNumber) {
+        if (flight.flight_number) return flight.flight_number;
+        if (flight.callsign && flight.callsign.toUpperCase() !== (tailNumber || '').toUpperCase()) {
+            return flight.callsign;
+        }
+        const dep = flight.departure_iata || flight.departure_icao || '';
+        const arr = flight.arrival_iata || flight.arrival_icao || '';
+        if (dep && arr) return `${dep} → ${arr}`;
+        if (dep) return `From ${dep}`;
+        if (arr) return `To ${arr}`;
+        const dt = flight.actual_departure || flight.scheduled_departure;
+        if (dt) return `Flight · ${this.formatDateShort(dt)}`;
+        return 'Local Flight';
+    },
+
+    /** Returns "Today", "Yesterday", day-of-week, or "May 25" for older dates */
+    formatRelativeDate(iso) {
+        if (!iso) return '—';
+        const d = new Date(iso);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const flightDay = new Date(d);
+        flightDay.setHours(0, 0, 0, 0);
+        const diffDays = Math.round((today - flightDay) / 86400000);
+        if (diffDays === 0) return 'Today';
+        if (diffDays === 1) return 'Yesterday';
+        if (diffDays < 7) return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+        return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    },
+
+    formatDateShort(iso) {
+        if (!iso) return '—';
+        return new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric' });
+    },
+
+    formatDuration(seconds) {
+        if (!seconds || seconds <= 0) return '—';
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        if (h > 0 && m > 0) return `${h}h ${m}m`;
+        if (h > 0) return `${h}h`;
+        return `${m}m`;
+    },
+
+    /** Elapsed time from a departure timestamp until now */
+    formatAirborneTime(depIso) {
+        if (!depIso) return null;
+        const s = Math.floor((Date.now() - new Date(depIso).getTime()) / 1000);
+        return s > 0 ? this.formatDuration(s) : null;
+    },
+
     /** Show toast notification */
     toast(msg, type = 'info', duration = 4000) {
         const c = document.getElementById('toast-container');

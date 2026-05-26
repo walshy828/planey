@@ -241,14 +241,20 @@ async def get_stats():
     from app.models import Aircraft, Flight, Position
 
     async with async_session() as session:
+        from datetime import datetime as _dt, timezone as _tz
+        today_start = _dt.now(_tz.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
         ac_count = await session.execute(
             select(func.count(Aircraft.id)).where(Aircraft.active == True)
         )
         flight_count = await session.execute(
             select(func.count(Flight.id)).where(Flight.status.in_(["scheduled", "active"]))
         )
-        pos_count = await session.execute(
-            select(func.count(Position.id))
+        flights_today = await session.execute(
+            select(func.count(Flight.id)).where(
+                Flight.status == "landed",
+                Flight.actual_arrival >= today_start  # today_start is tz-aware; column is DateTime(timezone=True)
+            )
         )
         total_flights = await session.execute(
             select(func.count(Flight.id))
@@ -258,7 +264,7 @@ async def get_stats():
         return {
             "active_aircraft": ac_count.scalar() or 0,
             "active_flights": flight_count.scalar() or 0,
-            "total_positions": pos_count.scalar() or 0,
+            "flights_today": flights_today.scalar() or 0,
             "total_flights": total_flights.scalar() or 0,
             "websocket_connections": ws_manager.connection_count,
             "tracker": {

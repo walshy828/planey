@@ -1162,3 +1162,684 @@ input:checked + .slider:before {
 }
 
 
+/* ============================================================================
+   Redesigned Aircraft Card Components
+   ============================================================================ */
+
+/* Header row */
+.ac-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 8px;
+}
+.ac-identity { flex: 1; min-width: 0; }
+.ac-tail {
+    font-family: var(--mono);
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 0.5px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.ac-category-tag {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: var(--text-muted);
+    background: rgba(255,255,255,0.06);
+    border: 1px solid var(--border-color);
+    border-radius: 3px;
+    padding: 1px 4px;
+}
+.ac-sub {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.ac-header-right {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+/* Flight context block */
+.ac-context {
+    margin: 10px 0 8px;
+    padding: 9px 10px;
+    background: rgba(255,255,255,0.025);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+}
+.ac-context-airborne {
+    background: rgba(0, 212, 255, 0.06);
+    border-color: rgba(0, 212, 255, 0.2);
+}
+.ac-context-scheduled {
+    background: rgba(255, 171, 0, 0.05);
+    border-color: rgba(255, 171, 0, 0.2);
+}
+.ac-flight-id {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 0.5px;
+    background: var(--accent-dim);
+    border-radius: 3px;
+    padding: 1px 5px;
+    margin-bottom: 7px;
+}
+
+/* Route display within context */
+.ac-route-display {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.ac-route-point {
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 auto;
+    max-width: 88px;
+}
+.ac-route-right { align-items: flex-end; }
+.ac-route-code {
+    font-family: var(--mono);
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: 1px;
+    line-height: 1.1;
+}
+.ac-route-name {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 88px;
+}
+.ac-route-center {
+    display: flex;
+    align-items: center;
+    flex: 1;
+    min-width: 0;
+    padding: 0 4px;
+}
+.ac-arrow-line {
+    flex: 1;
+    height: 1px;
+    background: var(--text-muted);
+    opacity: 0.3;
+}
+.ac-context-airborne .ac-arrow-line { opacity: 0.5; background: var(--accent); }
+.ac-arrow-icon {
+    font-size: 13px;
+    padding: 0 3px;
+    flex-shrink: 0;
+    color: var(--text-secondary);
+}
+.ac-context-airborne .ac-arrow-icon { color: var(--accent); }
+.ac-route-meta {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-top: 7px;
+    line-height: 1.4;
+}
+.ac-expected-route {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-family: var(--mono);
+    margin-top: 5px;
+    padding-top: 5px;
+    border-top: 1px solid rgba(255,255,255,0.05);
+    word-break: break-all;
+    line-height: 1.5;
+}
+
+/* Grounded context */
+.ac-context-ground {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 3px;
+}
+.ac-loc-pin { font-size: 12px; }
+.ac-loc-name {
+    font-size: 13px;
+    color: var(--text-primary);
+    font-weight: 500;
+}
+.ac-loc-time {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-left: 2px;
+}
+
+/* Live telemetry block */
+.ac-telemetry {
+    background: rgba(0,212,255,0.05);
+    border: 1px solid rgba(0,212,255,0.14);
+    border-radius: var(--radius-sm);
+    padding: 9px 10px 7px;
+    margin-bottom: 8px;
+}
+.ac-telem-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4px;
+}
+.ac-telem-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+}
+.ac-telem-label {
+    font-size: 9px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    letter-spacing: 0.5px;
+    line-height: 1;
+}
+.ac-telem-val {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+    margin-top: 3px;
+}
+.ac-telem-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 6px;
+    padding-top: 5px;
+    border-top: 1px solid rgba(0,212,255,0.1);
+}
+.ac-squawk {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--amber);
+    opacity: 0.8;
+}
+
+/* Action buttons row */
+.ac-actions {
+    display: flex;
+    gap: 4px;
+    margin-top: 8px;
+}
+.btn-ac-action {
+    flex: 1;
+    padding: 5px 6px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-family: var(--font);
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    transition: all var(--transition);
+    white-space: nowrap;
+}
+.btn-ac-action:hover {
+    background: var(--accent-dim);
+    color: var(--accent);
+    border-color: rgba(0,212,255,0.3);
+}
+.btn-ac-action.btn-ac-action-open {
+    background: var(--accent-dim);
+    color: var(--accent);
+    border-color: rgba(0,212,255,0.3);
+}
+.btn-flights-chevron { transition: transform var(--transition); }
+.btn-flights-chevron.open { transform: rotate(180deg); }
+
+/* Reconcile hint */
+.btn-reconcile-hint {
+    display: block;
+    background: none;
+    border: none;
+    padding: 4px 0 0;
+    font-size: 10.5px;
+    color: var(--amber);
+    cursor: pointer;
+    opacity: 0.7;
+    transition: opacity var(--transition);
+    text-align: left;
+    width: 100%;
+}
+.btn-reconcile-hint:hover { opacity: 1; }
+
+/* Flights drawer */
+.ac-flights-drawer {
+    border-top: 1px solid var(--border-color);
+    margin-top: 8px;
+    padding-top: 8px;
+}
+.drawer-loading, .drawer-empty {
+    font-size: 12px;
+    color: var(--text-muted);
+    text-align: center;
+    padding: 8px 0;
+}
+.drawer-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    margin-bottom: 5px;
+}
+.drawer-count {
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: 0;
+}
+.drawer-flight-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 4px;
+    border-radius: 4px;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+    transition: background var(--transition);
+}
+.drawer-flight-row:last-of-type { border-bottom: none; }
+.drawer-flight-row.clickable { cursor: pointer; }
+.drawer-flight-row.clickable:hover { background: var(--bg-elevated); }
+.dfr-date {
+    font-size: 10.5px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+    width: 56px;
+    white-space: nowrap;
+}
+.dfr-route {
+    flex: 1;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.dfr-duration {
+    font-size: 11px;
+    color: var(--text-secondary);
+    font-family: var(--mono);
+    flex-shrink: 0;
+    width: 36px;
+    text-align: right;
+}
+.dfr-badge { flex-shrink: 0; }
+.drawer-view-all {
+    display: block;
+    text-align: center;
+    font-size: 11px;
+    color: var(--accent);
+    padding: 7px 0 2px;
+    cursor: pointer;
+    opacity: 0.75;
+    transition: opacity var(--transition);
+    border-top: 1px solid rgba(255,255,255,0.04);
+    margin-top: 4px;
+}
+.drawer-view-all:hover { opacity: 1; }
+
+
+/* ============================================================================
+   Redesigned Flight Card Components
+   ============================================================================ */
+
+.flight-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-left: 3px solid transparent;
+    border-radius: var(--radius-md);
+    padding: 12px;
+    margin-bottom: 8px;
+    transition: all var(--transition);
+}
+.flight-card:hover { border-color: var(--border-active); border-left-color: inherit; }
+.flight-card.status-active { border-left-color: var(--accent); }
+.flight-card.status-scheduled { border-left-color: var(--amber); }
+.flight-card.status-landed { border-left-color: rgba(136,153,170,0.3); }
+.flight-card.status-cancelled { border-left-color: var(--red); }
+
+/* Aircraft context header */
+.fl-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+.fl-aircraft {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.fl-tail {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--accent);
+}
+.fl-type {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+.fl-flight-id {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-secondary);
+    background: rgba(255,255,255,0.05);
+    border-radius: 3px;
+    padding: 1px 5px;
+}
+
+/* Route block */
+.fl-route-block {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 4px;
+    margin: 8px 0 6px;
+}
+.fl-route-end {
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 auto;
+    max-width: 96px;
+}
+.fl-route-end-right { align-items: flex-end; }
+.fl-iata {
+    font-family: var(--mono);
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: 1px;
+    line-height: 1;
+}
+.fl-iata-sm {
+    font-size: 13px;
+    font-style: italic;
+    color: var(--text-secondary);
+    letter-spacing: 0;
+}
+.fl-airport-name {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 96px;
+}
+.fl-airport-name-right { text-align: right; }
+.fl-route-center {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex: 1;
+    gap: 3px;
+    min-width: 0;
+    padding: 0 4px;
+}
+.fl-route-arrow-wrap {
+    display: flex;
+    align-items: center;
+    width: 100%;
+}
+.fl-arrow-line {
+    flex: 1;
+    height: 1px;
+    background: var(--text-muted);
+    opacity: 0.25;
+}
+.fl-arrow-icon {
+    font-size: 12px;
+    padding: 0 3px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+.flight-card.status-active .fl-arrow-line { opacity: 0.4; background: var(--accent); }
+.flight-card.status-active .fl-arrow-icon { color: var(--accent); }
+.fl-duration-badge {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    color: var(--text-muted);
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 3px;
+    padding: 1px 5px;
+    white-space: nowrap;
+}
+
+/* Times row */
+.fl-times {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin: 5px 0;
+}
+.fl-time-item { display: flex; align-items: center; gap: 3px; }
+.fl-time-sched { font-size: 10px; color: var(--text-muted); font-style: italic; }
+.fl-time-airborne {
+    font-size: 11px;
+    color: var(--accent);
+    font-weight: 600;
+    margin-left: auto;
+}
+
+/* Live telemetry row */
+.fl-live-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0;
+    font-size: 11px;
+    color: var(--accent);
+    font-family: var(--mono);
+    margin: 4px 0;
+    padding: 4px 8px;
+    background: rgba(0,212,255,0.06);
+    border: 1px solid rgba(0,212,255,0.12);
+    border-radius: var(--radius-sm);
+}
+
+/* Stats row */
+.fl-stats-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0;
+    font-size: 11px;
+    color: var(--text-secondary);
+    font-family: var(--mono);
+    margin: 4px 0;
+    padding: 5px 8px;
+    background: rgba(255,255,255,0.02);
+    border-radius: var(--radius-sm);
+}
+.fl-sep { color: var(--text-muted); padding: 0 5px; opacity: 0.5; }
+
+/* Expected route */
+.fl-expected-route {
+    font-size: 10.5px;
+    color: var(--text-muted);
+    font-family: var(--mono);
+    padding: 5px 8px;
+    background: rgba(255,171,0,0.04);
+    border: 1px solid rgba(255,171,0,0.1);
+    border-radius: var(--radius-sm);
+    word-break: break-all;
+    line-height: 1.5;
+    margin: 4px 0;
+}
+
+/* Flight card action buttons */
+.fl-actions {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255,255,255,0.04);
+}
+.fl-actions .btn-xs {
+    width: auto;
+}
+.fl-actions .btn-view-flight {
+    background: var(--accent-dim);
+    color: var(--accent);
+    border: 1px solid rgba(0,212,255,0.3);
+    border-radius: var(--radius-sm);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: all var(--transition);
+}
+.fl-actions .btn-view-flight:hover { background: rgba(0,212,255,0.25); }
+.fl-actions .btn-edit-flight {
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    font-size: 11px;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: all var(--transition);
+}
+.fl-actions .btn-edit-flight:hover { color: var(--text-primary); border-color: var(--text-muted); }
+.fl-actions .btn-delete-flight {
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    font-size: 11px;
+    padding: 4px 8px;
+    cursor: pointer;
+    transition: all var(--transition);
+}
+.fl-actions .btn-delete-flight:hover {
+    color: var(--red);
+    background: rgba(255,82,82,0.1);
+    border-color: rgba(255,82,82,0.3);
+}
+
+/* ── Map Layer Switcher ────────────────────────────────────────────────── */
+.map-layer-control {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 4px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    padding-top: 4px;
+}
+
+.map-layer-btn {
+    width: 36px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    position: relative;
+}
+
+.map-layer-btn.active {
+    color: var(--accent);
+    background: rgba(0, 212, 255, 0.12);
+    border-radius: 6px;
+}
+
+.map-layer-btn:not(.active):hover {
+    color: var(--text-secondary);
+}
+
+/* ── Airborne indicator (pulsing dot) ─────────────────────────────────── */
+.airborne-indicator {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    margin-right: 5px;
+    flex-shrink: 0;
+}
+
+.airborne-indicator.active {
+    background: var(--green);
+    animation: pulse-ring 2s ease-out infinite;
+}
+
+@keyframes pulse-ring {
+    0%   { box-shadow: 0 0 0 0 rgba(0, 230, 118, 0.6); }
+    60%  { box-shadow: 0 0 0 5px rgba(0, 230, 118, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(0, 230, 118, 0); }
+}
+
+#stat-active-flights {
+    display: flex;
+    align-items: center;
+}
+
+/* ── Fuel stop badges ─────────────────────────────────────────────────── */
+.fl-stop-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    background: rgba(255, 183, 77, 0.12);
+    color: #ffb74d;
+    border: 1px solid rgba(255, 183, 77, 0.25);
+    border-radius: 4px;
+    font-size: 10px;
+    padding: 2px 6px;
+    margin-top: 4px;
+}
+
+.dfr-fuel-stop {
+    font-size: 11px;
+    margin-left: 4px;
+    opacity: 0.8;
+    cursor: default;
+    title: "Fuel stop — departed again within 45 min";
+}
+
+/* Responsive adjustments for new components */
+@media (max-width: 768px) {
+    .ac-telem-val { font-size: 12px; }
+    .ac-route-code { font-size: 17px; }
+    .fl-iata { font-size: 19px; }
+    .fl-times { font-size: 11px; }
+    .fl-time-airborne { margin-left: 0; }
+    .map-layer-control { flex-direction: row; margin-top: 0; margin-left: 4px; border-top: none; border-left: 1px solid rgba(255,255,255,0.08); padding-top: 0; padding-left: 4px; }
+}
+

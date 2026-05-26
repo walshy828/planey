@@ -507,12 +507,14 @@ class ReconciliationService:
             flight_id = None
             flight_obj = None
             
-            # Find active/scheduled flight
+            # Find the in-progress flight to land. Only target active flights or scheduled
+            # flights that have actually departed — never land a future scheduled flight.
             flight_result = await db.execute(
                 select(Flight)
                 .where(
                     Flight.aircraft_id == aircraft.id,
-                    Flight.status.in_(["scheduled", "active"])
+                    Flight.status.in_(["scheduled", "active"]),
+                    Flight.actual_departure.isnot(None),
                 )
                 .order_by(Flight.created_at.desc())
                 .limit(1)

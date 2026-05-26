@@ -10,6 +10,26 @@ const FlightMap = {
     plannedRoutes: {}, // aircraft_id → L.polyline (dashed route)
     airportMarkers: {}, // iata → L.circleMarker
     showTrails: true,
+    _tileLayers: null,
+    _currentLayerName: 'dark',
+
+    _layerDefs: {
+        dark: {
+            url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+            opts: { maxZoom: 19, subdomains: 'abcd' },
+            attribution: '© <a href="https://carto.com/">CARTO</a> · <a href="https://opensky-network.org">OpenSky</a>'
+        },
+        light: {
+            url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+            opts: { maxZoom: 19, subdomains: 'abcd' },
+            attribution: '© <a href="https://carto.com/">CARTO</a> · <a href="https://opensky-network.org">OpenSky</a>'
+        },
+        satellite: {
+            url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+            opts: { maxZoom: 19 },
+            attribution: '© <a href="https://www.esri.com/">Esri</a> · <a href="https://opensky-network.org">OpenSky</a>'
+        }
+    },
 
     init() {
         this.map = L.map('map', {
@@ -19,16 +39,17 @@ const FlightMap = {
             attributionControl: false
         });
 
-        // Dark tile layer
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-            maxZoom: 19,
-            subdomains: 'abcd'
-        }).addTo(this.map);
+        // Build tile layer instances
+        this._tileLayers = {};
+        for (const [name, def] of Object.entries(this._layerDefs)) {
+            this._tileLayers[name] = L.tileLayer(def.url, def.opts);
+        }
+        this._tileLayers.dark.addTo(this.map);
 
-        // Attribution
-        L.control.attribution({ prefix: false, position: 'bottomleft' })
-            .addAttribution('© <a href="https://carto.com/">CARTO</a> · <a href="https://opensky-network.org">OpenSky</a>')
-            .addTo(this.map);
+        // Attribution control (updated on layer switch)
+        this._attribution = L.control.attribution({ prefix: false, position: 'bottomleft' });
+        this._attribution.addTo(this.map);
+        this._attribution.addAttribution(this._layerDefs.dark.attribution);
 
         // Controls
         document.getElementById('btn-center-all').addEventListener('click', () => this.updateDefaultMapView());
@@ -37,6 +58,30 @@ const FlightMap = {
             e.currentTarget.classList.toggle('active', this.showTrails);
             this._toggleTrails();
         });
+
+        // Layer switcher buttons
+        document.querySelectorAll('.map-layer-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const layer = btn.dataset.layer;
+                if (layer === this._currentLayerName) return;
+                this.setLayer(layer);
+                document.querySelectorAll('.map-layer-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            });
+        });
+    },
+
+    setLayer(name) {
+        if (!this._tileLayers[name]) return;
+        this._tileLayers[this._currentLayerName].remove();
+        this._currentLayerName = name;
+        this._tileLayers[name].addTo(this.map);
+
+        // Satellite view: lighten trail colors so they read against imagery
+        const isSatellite = name === 'satellite';
+        Object.values(this.trails).forEach(segs =>
+            segs.forEach(seg => seg.setStyle({ weight: isSatellite ? 3 : 4, opacity: isSatellite ? 0.95 : 0.8 }))
+        );
     },
 
     /**

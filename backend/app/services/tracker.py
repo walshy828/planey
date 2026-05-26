@@ -37,9 +37,9 @@ class TrackerService:
         self.last_poll_status = "never"
         self.is_airborne_mode = False
         self.current_interval = 300
-        # Landing confirmation: track consecutive on-ground positions per flight
-        # Key: flight_id (str), Value: count of consecutive on-ground positions
-        self._landing_confirmation_counts = {}
+        # Landing confirmation: track per-flight on-ground state
+        # Key: flight_id (str), Value: {"count": int, "first_ts": datetime}
+        self._landing_states: dict = {}
 
     async def _broadcast_tracker_status(self):
         try:
@@ -409,7 +409,7 @@ class TrackerService:
 
                     # Update flight status if needed
                     if active_flight:
-                        await self._update_flight_status(active_flight, sv, session)
+                        await self._update_flight_status(active_flight, sv, session, aircraft.category)
 
                     # Broadcast via WebSocket
                     await self._broadcast_position(aircraft, position, active_flight)
@@ -485,9 +485,70 @@ class TrackerService:
             except Exception as e:
                 logger.error(f"Failed to reconcile orphan positions for auto-created flight: {e}")
 
+            # Check if this takeoff follows a short stop at the same location (fuel stop / heli stop)
+            await self._check_and_tag_fuel_stop(aircraft, latitude, longitude, timestamp, session)
+
             return new_flight
 
         return None
+
+    async def _check_and_tag_fuel_stop(
+        self,
+        aircraft: Aircraft,
+        latitude: Optional[float],
+        longitude: Optional[float],
+        departure_ts: datetime,
+        session: AsyncSession,
+    ) -> None:
+        """
+        If the aircraft just took off within 45 min of its last landing at the same location,
+        tag the landed flight as a fuel/technical stop in raw_data.
+        """
+        try:
+            recent_res = await session.execute(
+                select(Flight)
+                .where(
+                    Flight.aircraft_id == aircraft.id,
+                    Flight.status == "landed",
+                    Flight.actual_arrival.isnot(None),
+                )
+                .order_by(Flight.actual_arrival.desc())
+                .limit(1)
+            )
+            recent = recent_res.scalars().first()
+            if not recent or not recent.actual_arrival:
+                return
+
+            arr = recent.actual_arrival
+            if arr.tzinfo is None:
+                arr = arr.replace(tzinfo=timezone.utc)
+            dep = departure_ts
+            if dep.tzinfo is None:
+                dep = dep.replace(tzinfo=timezone.utc)
+
+            gap_minutes = (dep - arr).total_seconds() / 60
+            if not (0 < gap_minutes < 45):
+                return
+
+            # Check proximity — takeoff coords must be within 5 NM of landing coords
+            if latitude is not None and longitude is not None and recent.arrival_lat and recent.arrival_lon:
+                from app.services.stats_calculator import haversine_distance
+                dist_nm = haversine_distance(latitude, longitude, recent.arrival_lat, recent.arrival_lon)
+                if dist_nm > 5.0:
+                    return
+
+            raw = recent.raw_data or {}
+            raw["stop_type"] = "fuel_stop"
+            raw["fuel_stop_gap_minutes"] = round(gap_minutes, 1)
+            recent.raw_data = raw
+            logger.info(
+                f"Position-based fuel stop: {aircraft.tail_number} took off "
+                f"{gap_minutes:.0f} min after landing at "
+                f"{recent.arrival_name or recent.arrival_iata or 'unknown'}. "
+                f"Tagged flight {recent.id}."
+            )
+        except Exception as e:
+            logger.warning(f"Fuel stop check failed for {aircraft.tail_number}: {e}")
 
     async def _get_active_flight(self, aircraft_id, timestamp: datetime, session: AsyncSession) -> Optional[Flight]:
         """Get the currently active or closest scheduled flight for an aircraft.
@@ -525,31 +586,50 @@ class TrackerService:
         candidates.sort(key=flight_proximity)
         return candidates[0]
 
-    async def _update_flight_status(self, flight: Flight, sv, session: AsyncSession):
+    async def _update_flight_status(self, flight: Flight, sv, session: AsyncSession, aircraft_category: str = 'plane'):
         """Update flight status based on position data.
-        
-        Landing requires 5 consecutive on-ground positions to prevent
-        premature landing detection from touch-and-gos or fuel stops.
+
+        Landing confirmation thresholds (prevents false positives from touch-and-gos):
+        - Helicopters: 3 consecutive on-ground positions OR first_on_ground + 5 min
+        - Fixed-wing:  5 consecutive on-ground positions OR first_on_ground + 8 min
         """
         old_status = flight.status
         flight_key = str(flight.id)
 
+        is_helicopter = aircraft_category == 'helicopter'
+        count_threshold = 3 if is_helicopter else 5
+        time_threshold_min = 5 if is_helicopter else 8
+
         if sv.on_ground:
             if old_status == "active":
-                # Increment landing confirmation counter
-                self._landing_confirmation_counts[flight_key] = \
-                    self._landing_confirmation_counts.get(flight_key, 0) + 1
-                count = self._landing_confirmation_counts[flight_key]
+                pos_time = sv.timestamp if sv.timestamp.tzinfo else sv.timestamp.replace(tzinfo=timezone.utc)
 
-                if count < 5:
+                if flight_key not in self._landing_states:
+                    self._landing_states[flight_key] = {"count": 1, "first_ts": pos_time}
+                else:
+                    self._landing_states[flight_key]["count"] += 1
+
+                state = self._landing_states[flight_key]
+                count = state["count"]
+                elapsed_min = (pos_time - state["first_ts"]).total_seconds() / 60
+
+                confirmed_by_count = count >= count_threshold
+                confirmed_by_time = elapsed_min >= time_threshold_min
+
+                if not confirmed_by_count and not confirmed_by_time:
                     logger.debug(
-                        f"Flight {flight.flight_number} on-ground position "
-                        f"{count}/5 — awaiting landing confirmation"
+                        f"Flight {flight.flight_number} on-ground {count}/{count_threshold} "
+                        f"({elapsed_min:.1f}/{time_threshold_min} min) — awaiting landing confirmation"
                     )
-                    return  # Don't mark as landed yet
+                    return
 
-                # 5 consecutive on-ground positions confirmed — aircraft has landed
-                del self._landing_confirmation_counts[flight_key]
+                # Landing confirmed
+                del self._landing_states[flight_key]
+                logger.info(
+                    f"Flight {flight.flight_number} landing confirmed: "
+                    f"{'time-based' if confirmed_by_time and not confirmed_by_count else 'count-based'} "
+                    f"({count} positions, {elapsed_min:.1f} min on ground)"
+                )
 
                 # Populate arrival_name from the last position if no arrival airport
                 arrival_name = flight.arrival_name
@@ -574,7 +654,7 @@ class TrackerService:
                     flight.arrival_name = arrival_name
                     flight.arrival_lat = sv.latitude
                     flight.arrival_lon = sv.longitude
-                logger.info(f"Flight {flight.flight_number} has landed (5 consecutive on-ground confirmed)")
+                logger.info(f"Flight {flight.flight_number} has landed")
 
                 # Proactively calculate flight summary statistics upon landing
                 try:
@@ -594,13 +674,13 @@ class TrackerService:
                     "summary_stats": flight.summary_stats,
                 })
         else:
-            # Aircraft is airborne — reset any landing confirmation counter
-            if flight_key in self._landing_confirmation_counts:
+            # Aircraft is airborne — reset any pending landing confirmation
+            if flight_key in self._landing_states:
+                state = self._landing_states.pop(flight_key)
                 logger.debug(
                     f"Flight {flight.flight_number} back airborne — "
-                    f"resetting landing counter (was {self._landing_confirmation_counts[flight_key]})"
+                    f"resetting landing state (was {state['count']} on-ground readings)"
                 )
-                del self._landing_confirmation_counts[flight_key]
 
             if old_status == "scheduled":
                 # Was scheduled, now in the air = active

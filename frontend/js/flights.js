@@ -12,7 +12,7 @@ const Flights = {
     currentFilter: 'all',
     aircraftFilter: 'all',
     aircraftSort: 'status',
-    manuallyToggledCollapse: new Map(), // aircraftId -> boolean (isCollapsed)
+    _openDrawers: new Set(), // aircraftIds with open flight drawers
 
     init() {
         // Tab switching
@@ -198,9 +198,18 @@ const Flights = {
         try {
             const stats = await API.getStats();
             document.getElementById('stat-aircraft-count').textContent = stats.active_aircraft || 0;
-            document.getElementById('stat-active-flights').textContent = stats.active_flights || 0;
-            document.getElementById('stat-positions').textContent = (stats.total_positions || 0).toLocaleString();
-            
+
+            const airborneCount = stats.active_flights || 0;
+            const airborneEl = document.getElementById('airborne-count');
+            const indicatorEl = document.getElementById('airborne-indicator');
+            if (airborneEl) airborneEl.textContent = airborneCount;
+            if (indicatorEl) {
+                indicatorEl.className = 'airborne-indicator' + (airborneCount > 0 ? ' active' : '');
+            }
+
+            const todayEl = document.getElementById('stat-flights-today');
+            if (todayEl) todayEl.textContent = stats.flights_today || 0;
+
             if (stats.tracker) {
                 this._updateTrackerUI(stats.tracker);
             }
@@ -263,234 +272,368 @@ const Flights = {
 
         if (this.aircraft.length === 0) {
             empty.style.display = '';
-            // Remove all cards but keep empty state
             list.querySelectorAll('.aircraft-card').forEach(c => c.remove());
             return;
         }
         empty.style.display = 'none';
-
-        // Remove old cards
         list.querySelectorAll('.aircraft-card').forEach(c => c.remove());
 
         let displayList = [...this.aircraft];
 
-        // Apply Filters
         if (this.aircraftFilter === 'active') {
-            displayList = displayList.filter(a => a.active_flight || (!a.latest_position?.on_ground && a.latest_position));
+            displayList = displayList.filter(a => {
+                const f = a.active_flight;
+                const p = a.latest_position;
+                return (f && f.status === 'active') || (p && !p.on_ground);
+            });
         } else if (this.aircraftFilter === 'ground') {
-            displayList = displayList.filter(a => !a.active_flight && (a.latest_position?.on_ground || !a.latest_position));
+            displayList = displayList.filter(a => {
+                const f = a.active_flight;
+                const p = a.latest_position;
+                return (!f || f.status === 'scheduled') && (!p || p.on_ground);
+            });
         }
 
-        // Apply Sorting
         if (this.aircraftSort === 'status') {
-            // Active flights first, then recently updated
             displayList.sort((a, b) => {
-                const aActive = a.active_flight || (!a.latest_position?.on_ground && a.latest_position) ? 1 : 0;
-                const bActive = b.active_flight || (!b.latest_position?.on_ground && b.latest_position) ? 1 : 0;
-                if (aActive !== bActive) return bActive - aActive;
-                const aTime = a.latest_position?.timestamp ? new Date(a.latest_position.timestamp).getTime() : 0;
-                const bTime = b.latest_position?.timestamp ? new Date(b.latest_position.timestamp).getTime() : 0;
-                return bTime - aTime;
+                const pri = ac => {
+                    if (ac.active_flight?.status === 'active') return 3;
+                    if (ac.latest_position && !ac.latest_position.on_ground) return 3;
+                    if (ac.active_flight?.status === 'scheduled') return 2;
+                    return 1;
+                };
+                const pa = pri(a), pb = pri(b);
+                if (pa !== pb) return pb - pa;
+                const ta = a.latest_position?.timestamp ? new Date(a.latest_position.timestamp).getTime() : 0;
+                const tb = b.latest_position?.timestamp ? new Date(b.latest_position.timestamp).getTime() : 0;
+                return tb - ta;
             });
         } else if (this.aircraftSort === 'tail') {
             displayList.sort((a, b) => (a.tail_number || '').localeCompare(b.tail_number || ''));
         } else if (this.aircraftSort === 'updated') {
             displayList.sort((a, b) => {
-                const aTime = a.latest_position?.timestamp ? new Date(a.latest_position.timestamp).getTime() : 0;
-                const bTime = b.latest_position?.timestamp ? new Date(b.latest_position.timestamp).getTime() : 0;
-                return bTime - aTime;
+                const ta = a.latest_position?.timestamp ? new Date(a.latest_position.timestamp).getTime() : 0;
+                const tb = b.latest_position?.timestamp ? new Date(b.latest_position.timestamp).getTime() : 0;
+                return tb - ta;
             });
         }
 
-        if (displayList.length === 0) {
-            empty.style.display = '';
-            return;
-        }
+        if (displayList.length === 0) { empty.style.display = ''; return; }
 
         for (const ac of displayList) {
             const card = document.createElement('div');
             const pos = ac.latest_position;
             const flight = ac.active_flight;
-            const statusText = flight ? flight.status : (pos?.on_ground ? 'ground' : 'unknown');
-            const isActive = flight || (!pos?.on_ground && pos);
+            const isHeli = ac.category === 'helicopter';
+            const vehicleIcon = isHeli ? '🚁' : '✈';
 
-            let isCollapsed = !isActive; // Default to collapsed if inactive
-            if (this.manuallyToggledCollapse.has(ac.id)) {
-                isCollapsed = this.manuallyToggledCollapse.get(ac.id);
+            let statusText = 'unknown';
+            let isAirborne = false;
+            let isScheduled = false;
+            if (flight) {
+                statusText = flight.status;
+                isAirborne = flight.status === 'active' && pos && !pos.on_ground;
+                isScheduled = flight.status === 'scheduled';
+            } else if (pos) {
+                statusText = pos.on_ground ? 'ground' : 'active';
+                isAirborne = !pos.on_ground;
             }
 
-            card.className = `aircraft-card${ac.id === this.selectedAircraftId ? ' selected' : ''}${isCollapsed ? ' collapsed' : ''}`;
+            // Subtitle: display_name OR aircraft_type + airline
+            const subParts = [];
+            if (ac.display_name) subParts.push(ac.display_name);
+            else if (ac.aircraft_type) subParts.push(ac.aircraft_type);
+            if (ac.airline) subParts.push(ac.airline);
+            const acSub = subParts.join(' · ') || 'Unknown type';
+
+            // Context section
+            let contextHtml = '';
+            if (flight && (flight.status === 'active' || flight.status === 'scheduled')) {
+                const dep = flight.departure_iata || flight.departure_icao || '???';
+                const arr = flight.arrival_iata || flight.arrival_icao || '???';
+                const depName = flight.departure_name || '';
+                const arrName = flight.arrival_name || '';
+
+                let metaLine = '';
+                if (isAirborne) {
+                    const depTime = flight.actual_departure || flight.scheduled_departure;
+                    const airborne = depTime ? Utils.formatAirborneTime(depTime) : null;
+                    const parts = [];
+                    if (depTime) parts.push(`Departed ${Utils.formatRelativeDate(depTime)} · ${Utils.formatTime(depTime)}`);
+                    if (airborne) parts.push(`${airborne} airborne`);
+                    if (flight.scheduled_arrival) parts.push(`ETA ${Utils.formatTime(flight.scheduled_arrival)}`);
+                    metaLine = parts.join(' · ');
+                } else if (isScheduled && flight.scheduled_departure) {
+                    const rel = Utils.formatRelativeDate(flight.scheduled_departure);
+                    const time = Utils.formatTime(flight.scheduled_departure);
+                    metaLine = `Departs ${rel} · ${time}`;
+                    if (flight.scheduled_arrival) metaLine += ` → ${Utils.formatTime(flight.scheduled_arrival)}`;
+                }
+
+                const flightNumTag = flight.flight_number
+                    ? `<span class="ac-flight-id">${flight.flight_number}</span>`
+                    : '';
+
+                contextHtml = `<div class="ac-context${isAirborne ? ' ac-context-airborne' : (isScheduled ? ' ac-context-scheduled' : '')}">
+                    ${flightNumTag}
+                    <div class="ac-route-display">
+                        <div class="ac-route-point">
+                            <span class="ac-route-code">${dep}</span>
+                            ${depName ? `<span class="ac-route-name">${depName}</span>` : ''}
+                        </div>
+                        <div class="ac-route-center">
+                            <span class="ac-arrow-line"></span>
+                            <span class="ac-arrow-icon">${vehicleIcon}</span>
+                            <span class="ac-arrow-line"></span>
+                        </div>
+                        <div class="ac-route-point ac-route-right">
+                            <span class="ac-route-code">${arr}</span>
+                            ${arrName ? `<span class="ac-route-name" style="text-align:right">${arrName}</span>` : ''}
+                        </div>
+                    </div>
+                    ${metaLine ? `<div class="ac-route-meta">${metaLine}</div>` : ''}
+                    ${flight.expected_route && isScheduled ? `<div class="ac-expected-route" title="Expected IFR route">${flight.expected_route}</div>` : ''}
+                </div>`;
+            } else if (pos) {
+                const timeText = pos.on_ground
+                    ? `Landed ${Utils.formatRelativeDate(pos.timestamp)} · ${Utils.formatTime(pos.timestamp)}`
+                    : `Active · <span class="live-time-ago" data-timestamp="${pos.timestamp}">${Utils.timeAgo(pos.timestamp)}</span>`;
+                contextHtml = `<div class="ac-context ac-context-ground">
+                    <span class="ac-loc-pin">📍</span>
+                    <span class="ac-loc-name" id="loc-${ac.id}">Loading…</span>
+                    <span class="ac-loc-time">${timeText}</span>
+                </div>`;
+            }
+
+            // Live telemetry — only shown when actively airborne
+            let telemHtml = '';
+            if (isAirborne && pos) {
+                const altStr = pos.altitude_ft != null
+                    ? (pos.altitude_ft >= 18000
+                        ? `FL${Math.round(pos.altitude_ft / 100)}`
+                        : `${Math.round(pos.altitude_ft).toLocaleString()} ft`)
+                    : '—';
+                const vsStr = Utils.formatVRate(pos.vertical_rate_fpm);
+                telemHtml = `<div class="ac-telemetry">
+                    <div class="ac-telem-grid">
+                        <div class="ac-telem-item">
+                            <span class="ac-telem-label">Alt</span>
+                            <span class="ac-telem-val">${altStr}</span>
+                        </div>
+                        <div class="ac-telem-item">
+                            <span class="ac-telem-label">Speed</span>
+                            <span class="ac-telem-val">${Utils.formatSpeed(pos.ground_speed_kts)}</span>
+                        </div>
+                        <div class="ac-telem-item">
+                            <span class="ac-telem-label">Heading</span>
+                            <span class="ac-telem-val">${pos.heading != null ? Math.round(pos.heading) + '°' : '—'}</span>
+                        </div>
+                        <div class="ac-telem-item">
+                            <span class="ac-telem-label">V/S</span>
+                            <span class="ac-telem-val">${vsStr}</span>
+                        </div>
+                    </div>
+                    <div class="ac-telem-footer">
+                        <span>Updated <span class="live-time-ago" data-timestamp="${pos.timestamp}">${Utils.timeAgo(pos.timestamp)}</span></span>
+                        ${pos.squawk ? `<span class="ac-squawk">Squawk ${pos.squawk}</span>` : ''}
+                    </div>
+                </div>`;
+            }
+
+            // Reconcile hint for stuck active flights
+            const reconcileHtml = (flight && flight.status === 'active')
+                ? `<button class="btn-reconcile-hint btn-reconcile-flight" data-id="${flight.id}">Flight stuck on the ground? Reconcile →</button>`
+                : '';
+
+            const cardClasses = ['aircraft-card',
+                ac.id === this.selectedAircraftId ? 'selected' : '',
+                isAirborne ? 'is-airborne' : '',
+                isScheduled ? 'is-scheduled' : '',
+            ].filter(Boolean).join(' ');
+
+            card.className = cardClasses;
             card.dataset.id = ac.id;
 
             card.innerHTML = `
-                <div class="aircraft-card-header">
-                    <div>
-                        <div class="aircraft-tail">${ac.tail_number}${ac.category === 'helicopter' ? ' 🚁' : ''}</div>
-                        <div class="aircraft-type">${ac.aircraft_type || 'Unknown type'}${ac.airline ? ` · ${ac.airline}` : ''}</div>
-                        ${pos ? `<div class="aircraft-collapsed-location" id="loc-collapsed-${ac.id}">Loading last location...</div>` : ''}
-                        ${pos ? `<div class="aircraft-collapsed-activity">${pos.on_ground ? 'Landed' : 'Active'}: <span class="${pos.on_ground ? '' : 'live-time-ago'}" data-timestamp="${pos.on_ground ? '' : pos.timestamp}">${pos.on_ground ? Utils.formatDateTime(pos.timestamp) : Utils.timeAgo(pos.timestamp)}</span></div>` : ''}
+                <div class="ac-header">
+                    <div class="ac-identity">
+                        <div class="ac-tail">${ac.tail_number}${isHeli ? ' <span class="ac-category-tag">HELI</span>' : ''}</div>
+                        <div class="ac-sub">${acSub}</div>
                     </div>
-                    <div style="display: flex; gap: 8px; align-items: center;">
-                        <button class="btn-primary btn-xs btn-add-flight-for" data-id="${ac.id}" style="padding: 2px 6px; font-size: 10px;">+ Flight</button>
+                    <div class="ac-header-right">
                         ${Utils.statusBadge(statusText)}
-                        <button class="btn-collapse" title="Toggle Details">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                        <button class="btn-icon-small btn-aircraft-menu" data-id="${ac.id}" title="Options">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1.5"></circle><circle cx="12" cy="5" r="1.5"></circle><circle cx="12" cy="19" r="1.5"></circle></svg>
                         </button>
                     </div>
                 </div>
-                <div class="aircraft-card-body">
-                    ${flight ? `
-                        <div class="flight-route-container">
-                            <div class="flight-route">
-                                <div class="route-point">
-                                    <span class="flight-airport"${!flight.departure_iata && flight.departure_name ? ' style="font-size:11px;font-style:italic;letter-spacing:0"' : ''}>${flight.departure_iata || (flight.departure_name ? flight.departure_name : '???')}</span>
-                                    ${flight.departure_name && flight.departure_iata ? `<span class="airport-name">${flight.departure_name}</span>` : ''}
-                                </div>
-                                <span class="flight-arrow"><span class="flight-arrow-line"></span>${ac.category === 'helicopter' ? '🚁' : '✈'}<span class="flight-arrow-line"></span></span>
-                                <div class="route-point">
-                                    <span class="flight-airport"${!flight.arrival_iata && flight.arrival_name ? ' style="font-size:11px;font-style:italic;letter-spacing:0"' : ''}>${flight.arrival_iata || (flight.arrival_name ? flight.arrival_name : '???')}</span>
-                                    ${flight.arrival_name && flight.arrival_iata ? `<span class="airport-name">${flight.arrival_name}</span>` : ''}
-                                </div>
-                            </div>
-                            <div class="flight-times">
-                                ${flight.actual_departure ? `<span>🛫 ${Utils.formatDateTime(flight.actual_departure)}</span>` : 
-                                  (flight.scheduled_departure ? `<span>🛫 ${Utils.formatDateTime(flight.scheduled_departure)}</span>` : '')}
-                                ${flight.scheduled_arrival ? `<span>🛬 ${Utils.formatDateTime(flight.scheduled_arrival)}</span>` : ''}
-                            </div>
-                            ${flight.expected_route ? `
-                            <div class="flight-expected-route" style="margin-top: 8px; font-size: 11px; color: var(--text-muted); background: var(--surface-bg); padding: 6px; border-radius: 4px; word-break: break-all;">
-                                <strong style="color: var(--text-color);">Expected Route:</strong> ${flight.expected_route}
-                            </div>` : ''}
-                            ${flight.status === 'active' ? `
-                            <div style="margin-top: 8px; display: flex; justify-content: flex-end;">
-                                <button class="btn-secondary btn-xs btn-reconcile-flight" data-id="${flight.id}" title="Force close a stuck flight if it has landed">Reconcile Flight</button>
-                            </div>` : ''}
-                        </div>
-                    ` : ''}
-                    ${pos ? `
-                        <div class="aircraft-details-grid">
-                            <div class="aircraft-detail" style="grid-column: span 2;">
-                                <span class="aircraft-detail-label">Location</span>
-                                <span class="aircraft-detail-value" id="loc-${ac.id}">Loading...</span>
-                            </div>
-                            <div class="aircraft-detail">
-                                <span class="aircraft-detail-label">Alt</span>
-                                <span class="aircraft-detail-value">${pos.on_ground ? 'Ground' : Utils.formatAlt(pos.altitude_ft)}</span>
-                            </div>
-                            <div class="aircraft-detail">
-                                <span class="aircraft-detail-label">Speed</span>
-                                <span class="aircraft-detail-value">${pos.on_ground ? '0 kts' : Utils.formatSpeed(pos.ground_speed_kts)}</span>
-                            </div>
-                            <div class="aircraft-detail">
-                                <span class="aircraft-detail-label">Heading</span>
-                                <span class="aircraft-detail-value">${pos.on_ground ? '—' : Math.round(pos.heading || 0) + '°'}</span>
-                            </div>
-                            <div class="aircraft-detail">
-                                <span class="aircraft-detail-label">${pos.on_ground ? 'Arrived' : 'Updated'}</span>
-                                <span class="aircraft-detail-value ${pos.on_ground ? '' : 'live-time-ago'}" data-timestamp="${pos.on_ground ? '' : pos.timestamp}">${pos.on_ground ? Utils.formatDateTime(pos.timestamp) : Utils.timeAgo(pos.timestamp)}</span>
-                            </div>
-                        </div>
-                    ` : '<div style="font-size:12px;color:var(--text-muted)">No position data</div>'}
+                ${contextHtml}
+                ${telemHtml}
+                <div class="ac-actions">
+                    <button class="btn-ac-action btn-poll-ac" data-id="${ac.id}" title="Fetch latest position from OpenSky">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.59-9.21l5.65-5.65"/></svg>
+                        Refresh
+                    </button>
+                    <button class="btn-ac-action btn-view-history" data-id="${ac.id}" data-tail="${ac.tail_number}" title="View position history timeline">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                        Timeline
+                    </button>
+                    <button class="btn-ac-action btn-toggle-flights${this._openDrawers.has(ac.id) ? ' btn-ac-action-open' : ''}" data-id="${ac.id}" title="View flights for this aircraft">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/></svg>
+                        Flights
+                        <svg class="btn-flights-chevron${this._openDrawers.has(ac.id) ? ' open' : ''}" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                    </button>
                 </div>
-                
-                <div class="aircraft-actions-modern">
-                    <div class="primary-actions">
-                        <button class="btn-secondary btn-poll-ac" data-id="${ac.id}" title="Poll current location">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.59-9.21l5.65-5.65"/></svg>
-                            Live Pos
-                        </button>
-                        <button class="btn-secondary btn-view-history" data-id="${ac.id}" data-tail="${ac.tail_number}">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-                            History
-                        </button>
-                    </div>
-                    <div class="card-options-container">
-                        <button class="btn-icon-small btn-aircraft-menu" data-id="${ac.id}" title="Aircraft Options">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1.5"></circle><circle cx="12" cy="5" r="1.5"></circle><circle cx="12" cy="19" r="1.5"></circle></svg>
-                        </button>
-                    </div>
-                </div>
-            `;
+                ${reconcileHtml}
+                <div class="ac-flights-drawer" id="drawer-${ac.id}" style="display:${this._openDrawers.has(ac.id) ? 'block' : 'none'}">
+                    <div class="drawer-loading">Loading flights…</div>
+                </div>`;
 
-            // Click to focus on map
             card.addEventListener('click', (e) => {
-                if (e.target.closest('button')) return;
-                
-                // If a timeline is active, hide it to clear the history trail and return to real-time
-                if (window.Timeline && Timeline.aircraftId) {
-                    Timeline.hide();
-                }
-                
+                if (e.target.closest('button') || e.target.closest('.ac-flights-drawer')) return;
+                if (window.Timeline && Timeline.aircraftId) Timeline.hide();
                 this.selectedAircraftId = ac.id;
                 this._renderAircraftList();
                 FlightMap.focusAircraft(ac.id);
             });
 
-            // Click to toggle collapse
-            const collapseBtn = card.querySelector('.btn-collapse');
-            if (collapseBtn) {
-                collapseBtn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    const isCurrentlyCollapsed = card.classList.contains('collapsed');
-                    if (isCurrentlyCollapsed) {
-                        card.classList.remove('collapsed');
-                        this.manuallyToggledCollapse.set(ac.id, false);
-                    } else {
-                        card.classList.add('collapsed');
-                        this.manuallyToggledCollapse.set(ac.id, true);
-                    }
+            list.appendChild(card);
+
+            // Restore open drawers after re-render
+            if (this._openDrawers.has(ac.id)) {
+                this._loadAircraftFlights(ac.id).then(flights => {
+                    const drawerEl = document.getElementById(`drawer-${ac.id}`);
+                    if (drawerEl) this._renderFlightsDrawerContent(ac.id, flights, drawerEl, ac.tail_number);
                 });
             }
 
-            list.appendChild(card);
-            
-            // Async load location name
-            if (pos && pos.latitude && pos.longitude) {
+            // Geocode location for grounded aircraft
+            if (pos && pos.latitude && pos.longitude && !flight) {
                 Utils.getLocationName(pos.latitude, pos.longitude).then(name => {
                     const el = document.getElementById(`loc-${ac.id}`);
                     if (el) el.textContent = name;
-                    const elCollapsed = document.getElementById(`loc-collapsed-${ac.id}`);
-                    if (elCollapsed) elCollapsed.textContent = name;
                 });
             }
         }
 
-        // Button handlers
-        list.querySelectorAll('.btn-add-flight-for').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this._showAddFlightModal(btn.dataset.id);
-            });
-        });
-        
         list.querySelectorAll('.btn-aircraft-menu').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this._showAircraftMenu(btn.dataset.id, btn);
-            });
+            btn.addEventListener('click', (e) => { e.stopPropagation(); this._showAircraftMenu(btn.dataset.id, btn); });
         });
-
         list.querySelectorAll('.btn-poll-ac').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this._pollAircraft(btn.dataset.id, btn);
-            });
+            btn.addEventListener('click', (e) => { e.stopPropagation(); this._pollAircraft(btn.dataset.id, btn); });
         });
-
-        list.querySelectorAll('.btn-reconcile-flight').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this._reconcileFlight(btn.dataset.id, btn);
-            });
-        });
-
         list.querySelectorAll('.btn-view-history').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                Timeline.showHistory(btn.dataset.id, btn.dataset.tail, 24);
-            });
+            btn.addEventListener('click', (e) => { e.stopPropagation(); Timeline.showHistory(btn.dataset.id, btn.dataset.tail, 24); });
+        });
+        list.querySelectorAll('.btn-toggle-flights').forEach(btn => {
+            btn.addEventListener('click', (e) => { e.stopPropagation(); this._toggleFlightsDrawer(btn.dataset.id, btn); });
+        });
+        list.querySelectorAll('.btn-reconcile-flight').forEach(btn => {
+            btn.addEventListener('click', (e) => { e.stopPropagation(); this._reconcileFlight(btn.dataset.id, btn); });
         });
     },
+
+    // ── Flights Drawer (inline per-aircraft flight history) ──
+
+    async _loadAircraftFlights(aircraftId) {
+        try {
+            return await API.getFlights({ aircraft_id: aircraftId, limit: 10 });
+        } catch (err) {
+            console.error('Failed to load flights for aircraft:', err);
+            return [];
+        }
+    },
+
+    async _toggleFlightsDrawer(aircraftId, btn) {
+        const drawer = document.getElementById(`drawer-${aircraftId}`);
+        if (!drawer) return;
+
+        if (this._openDrawers.has(aircraftId)) {
+            this._openDrawers.delete(aircraftId);
+            drawer.style.display = 'none';
+            btn.classList.remove('btn-ac-action-open');
+            btn.querySelector('.btn-flights-chevron')?.classList.remove('open');
+            return;
+        }
+
+        this._openDrawers.add(aircraftId);
+        drawer.style.display = 'block';
+        btn.classList.add('btn-ac-action-open');
+        btn.querySelector('.btn-flights-chevron')?.classList.add('open');
+
+        const ac = this.aircraft.find(a => a.id === aircraftId);
+        const flights = await this._loadAircraftFlights(aircraftId);
+        this._renderFlightsDrawerContent(aircraftId, flights, drawer, ac?.tail_number);
+    },
+
+    _renderFlightsDrawerContent(aircraftId, flights, drawerEl, tailNumber) {
+        if (!flights || flights.length === 0) {
+            drawerEl.innerHTML = '<div class="drawer-empty">No flight history found</div>';
+            return;
+        }
+
+        const rows = flights.slice(0, 8).map(f => {
+            const dt = f.actual_departure || f.scheduled_departure;
+            const dateStr = dt ? Utils.formatRelativeDate(dt) : '—';
+            const routeName = Utils.flightName(f, tailNumber);
+            let duration = '—';
+            if (f.summary_stats?.duration_seconds > 0) {
+                duration = Utils.formatDuration(f.summary_stats.duration_seconds);
+            } else if (f.actual_departure && f.actual_arrival) {
+                const s = (new Date(f.actual_arrival) - new Date(f.actual_departure)) / 1000;
+                if (s > 0) duration = Utils.formatDuration(s);
+            }
+            const canView = f.status === 'active' || f.status === 'landed';
+            const fuelStopHtml = f.raw_data?.stop_type === 'fuel_stop' ? '<span class="dfr-fuel-stop">⛽</span>' : '';
+            return `<div class="drawer-flight-row${canView ? ' clickable' : ''}" data-flight-id="${f.id}" data-aircraft-id="${aircraftId}" data-status="${f.status}">
+                <span class="dfr-date">${dateStr}</span>
+                <span class="dfr-route">${routeName}${fuelStopHtml}</span>
+                <span class="dfr-duration">${duration}</span>
+                <span class="dfr-badge">${Utils.statusBadge(f.status)}</span>
+            </div>`;
+        }).join('');
+
+        drawerEl.innerHTML = `
+            <div class="drawer-header">
+                <span>Recent Flights</span>
+                <span class="drawer-count">${flights.length} found</span>
+            </div>
+            ${rows}
+            <a class="drawer-view-all" data-aircraft-id="${aircraftId}">View all in Flights tab →</a>`;
+
+        drawerEl.querySelectorAll('.drawer-flight-row.clickable').forEach(row => {
+            row.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const fId = row.dataset.flightId;
+                const aId = row.dataset.aircraftId;
+                const f = flights.find(fl => fl.id === fId);
+                if (f) Timeline.showFlight(fId, aId, Utils.flightName(f, tailNumber));
+            });
+        });
+
+        drawerEl.querySelector('.drawer-view-all')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.goToFlightsForAircraft(aircraftId);
+        });
+    },
+
+    goToFlightsForAircraft(aircraftId) {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        const tab = document.querySelector('[data-tab="flights"]');
+        const panel = document.getElementById('panel-flights');
+        if (tab) tab.classList.add('active');
+        if (panel) panel.classList.add('active');
+
+        const acSelect = document.getElementById('history-aircraft-select');
+        if (acSelect) acSelect.value = aircraftId;
+
+        const allBtn = document.getElementById('filter-all');
+        if (allBtn) allBtn.click();
+        else this.loadFlights();
+    },
+
+    _loadHistory() { this.loadFlights(); },
 
     _renderFlightsList() {
         const list = document.getElementById('flights-list');
@@ -506,112 +649,155 @@ const Flights = {
 
         for (const f of this.flights) {
             const card = document.createElement('div');
-            card.className = 'flight-card';
             card.dataset.id = f.id;
-            
+
             const ac = this.aircraft.find(a => a.id === f.aircraft_id);
-            const isHelicopter = ac && ac.category === 'helicopter';
-            const arrowIcon = isHelicopter ? '🚁' : '✈';
-            
-            // Format pilot-centric telemetry summary stats HUD if present
+            const isHeli = ac?.category === 'helicopter';
+            const vehicleIcon = isHeli ? '🚁' : '✈';
+            const tailNumber = ac?.tail_number || '?';
+            const acType = ac?.aircraft_type || '';
+
+            // Show official flight ID only if it adds information beyond the route
+            const fName = Utils.flightName(f, tailNumber);
+            const hasOfficialId = f.flight_number || (f.callsign && f.callsign.toUpperCase() !== tailNumber.toUpperCase());
+            const flightIdHtml = hasOfficialId ? `<span class="fl-flight-id">${fName}</span>` : '';
+
+            // Route display — prefer IATA, fall back to short name
+            const dep = f.departure_iata || f.departure_icao || '';
+            const arr = f.arrival_iata || f.arrival_icao || '';
+            const depName = f.departure_name || '';
+            const arrName = f.arrival_name || '';
+            const depDisplay = dep || (depName ? depName.split(',')[0].substring(0, 12) : '???');
+            const arrDisplay = arr || (arrName ? arrName.split(',')[0].substring(0, 12) : '???');
+
+            // Duration badge for route arrow area
+            let durationBadge = '';
+            if (f.summary_stats?.duration_seconds > 0) {
+                durationBadge = `<span class="fl-duration-badge">${Utils.formatDuration(f.summary_stats.duration_seconds)}</span>`;
+            } else if (f.actual_departure && f.actual_arrival) {
+                const s = (new Date(f.actual_arrival) - new Date(f.actual_departure)) / 1000;
+                if (s > 60) durationBadge = `<span class="fl-duration-badge">${Utils.formatDuration(s)}</span>`;
+            }
+
+            // Time row
+            const depTime = f.actual_departure || f.scheduled_departure;
+            const arrTime = f.actual_arrival || f.scheduled_arrival;
+            let timeHtml = '';
+            if (depTime) {
+                const relDate = Utils.formatRelativeDate(depTime);
+                const time = Utils.formatTime(depTime);
+                const icon = f.actual_departure ? '🛫' : '🗓';
+                const suffix = !f.actual_departure ? ' <span class="fl-time-sched">(sched)</span>' : '';
+                timeHtml += `<span class="fl-time-item">${icon} ${relDate} · ${time}${suffix}</span>`;
+            }
+            if (arrTime) {
+                const time = Utils.formatTime(arrTime);
+                const icon = f.actual_arrival ? '🛬' : '→';
+                const suffix = !f.actual_arrival ? ' <span class="fl-time-sched">(est)</span>' : '';
+                timeHtml += `<span class="fl-time-item">${icon} ${time}${suffix}</span>`;
+            }
+            if (f.status === 'active' && depTime) {
+                const airborne = Utils.formatAirborneTime(depTime);
+                if (airborne) timeHtml += `<span class="fl-time-airborne">● ${airborne} airborne</span>`;
+            }
+
+            // Stats row (compact, single line)
             let statsHtml = '';
             if (f.summary_stats) {
                 const s = f.summary_stats;
-                
-                // Format duration: e.g., 2h 15m
-                let durationStr = '—';
-                if (s.duration_seconds > 0) {
-                    const hrs = Math.floor(s.duration_seconds / 3600);
-                    const mins = Math.floor((s.duration_seconds % 3600) / 60);
-                    durationStr = hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
-                }
-                
-                // Format distance: primary NM, secondary mi
-                const distNm = s.distance_nm != null ? `${s.distance_nm.toFixed(1)} NM` : '—';
-                const distSm = s.distance_sm != null ? `${s.distance_sm.toFixed(1)} mi` : '—';
-                
-                // Format ground speed: primary kts, secondary mph
-                const speedKts = s.avg_ground_speed_kts != null ? `${Math.round(s.avg_ground_speed_kts)} kts` : '—';
-                const speedMph = s.avg_ground_speed_kts != null ? `${Math.round(s.avg_ground_speed_kts * 1.15078)} mph` : '—';
-                
-                // Format max altitude: primary Flight Level FLxxx if >= 18000ft, secondary ft
-                let altStr = '—';
-                let altSecondary = '';
+                const parts = [];
+                if (s.duration_seconds > 0) parts.push(Utils.formatDuration(s.duration_seconds));
+                if (s.distance_nm != null) parts.push(`${s.distance_nm.toFixed(0)} NM`);
+                if (s.distance_sm != null) parts.push(`${s.distance_sm.toFixed(0)} mi`);
                 if (s.max_altitude_ft != null && s.max_altitude_ft > 0) {
-                    if (s.max_altitude_ft >= 18000) {
-                        const fl = Math.round(s.max_altitude_ft / 100);
-                        altStr = `FL${fl}`;
-                        altSecondary = `${s.max_altitude_ft.toLocaleString()} ft`;
-                    } else {
-                        altStr = `${s.max_altitude_ft.toLocaleString()} ft`;
-                    }
+                    parts.push(s.max_altitude_ft >= 18000
+                        ? `FL${Math.round(s.max_altitude_ft / 100)} peak`
+                        : `${Math.round(s.max_altitude_ft).toLocaleString()} ft peak`);
                 }
-                
-                statsHtml = `
-                    <div class="flight-stats-summary-grid" style="margin-top: 10px; border-top: 1px dashed rgba(255, 255, 255, 0.1); padding-top: 10px;">
-                        <div class="stat-box">
-                            <div class="stat-label">Duration</div>
-                            <div class="stat-value">${durationStr}</div>
-                        </div>
-                        <div class="stat-box">
-                            <div class="stat-label">Distance</div>
-                            <div class="stat-value">${distNm}</div>
-                            <span class="stat-unit-secondary">${distSm}</span>
-                        </div>
-                        <div class="stat-box">
-                            <div class="stat-label">Avg Speed</div>
-                            <div class="stat-value">${speedKts}</div>
-                            <span class="stat-unit-secondary">${speedMph}</span>
-                        </div>
-                        <div class="stat-box">
-                            <div class="stat-label">Max Alt</div>
-                            <div class="stat-value">${altStr}</div>
-                            ${altSecondary ? `<span class="stat-unit-secondary">${altSecondary}</span>` : ''}
-                        </div>
-                    </div>
-                `;
+                if (s.avg_ground_speed_kts != null) parts.push(`${Math.round(s.avg_ground_speed_kts)} kts avg`);
+                if (parts.length > 0) {
+                    statsHtml = `<div class="fl-stats-row">${parts.join('<span class="fl-sep">·</span>')}</div>`;
+                }
             }
 
+            // Active flight live telemetry
+            let liveHtml = '';
+            if (f.status === 'active') {
+                const activeFlight = this.aircraft.find(a => a.id === f.aircraft_id)?.active_flight;
+                const pos = this.aircraft.find(a => a.id === f.aircraft_id)?.latest_position;
+                if (pos && !pos.on_ground) {
+                    const altStr = pos.altitude_ft != null
+                        ? (pos.altitude_ft >= 18000 ? `FL${Math.round(pos.altitude_ft / 100)}` : `${Math.round(pos.altitude_ft).toLocaleString()} ft`)
+                        : null;
+                    const liveParts = [];
+                    if (altStr) liveParts.push(altStr);
+                    if (pos.ground_speed_kts != null) liveParts.push(`${Math.round(pos.ground_speed_kts)} kts`);
+                    if (pos.heading != null) liveParts.push(`${Math.round(pos.heading)}° hdg`);
+                    if (liveParts.length > 0) {
+                        liveHtml = `<div class="fl-live-row">${liveParts.join('<span class="fl-sep">·</span>')}</div>`;
+                    }
+                }
+            }
+
+            // Expected route for scheduled flights
+            const routeHtml = (f.expected_route && f.status === 'scheduled')
+                ? `<div class="fl-expected-route">Route: ${f.expected_route}</div>`
+                : '';
+
+            // Fuel/technical stop badge from raw_data
+            const stopType = f.raw_data?.stop_type;
+            const stopBadgeHtml = stopType === 'fuel_stop'
+                ? `<span class="fl-stop-badge">⛽ fuel stop</span>`
+                : '';
+
+            const statusClass = `status-${f.status}`;
+            card.className = `flight-card ${statusClass}`;
+
+            const canViewTrail = f.status === 'active' || f.status === 'landed';
+            if (canViewTrail) card.style.cursor = 'pointer';
+
             card.innerHTML = `
-                <div style="display:flex;justify-content:space-between;align-items:flex-start">
-                    <div class="flight-number">${f.flight_number || f.callsign || 'Unknown'}</div>
+                <div class="fl-header">
+                    <div class="fl-aircraft">
+                        <span class="fl-tail">${tailNumber}</span>
+                        ${acType ? `<span class="fl-type">${acType}</span>` : ''}
+                        ${flightIdHtml}
+                    </div>
                     ${Utils.statusBadge(f.status)}
                 </div>
-                <div class="flight-route-container" style="padding: 10px 0;">
-                    <div class="flight-route">
-                        <div class="route-point">
-                            <span class="flight-airport"${!f.departure_iata && f.departure_name ? ' style="font-size:11px;font-style:italic;letter-spacing:0"' : ''}>${f.departure_iata || (f.departure_name ? f.departure_name : '???')}</span>
-                            ${f.departure_name && f.departure_iata ? `<span class="airport-name">${f.departure_name}</span>` : ''}
-                        </div>
-                        <span class="flight-arrow"><span class="flight-arrow-line"></span>${arrowIcon}<span class="flight-arrow-line"></span></span>
-                        <div class="route-point">
-                            <span class="flight-airport"${!f.arrival_iata && f.arrival_name ? ' style="font-size:11px;font-style:italic;letter-spacing:0"' : ''}>${f.arrival_iata || (f.arrival_name ? f.arrival_name : '???')}</span>
-                            ${f.arrival_name && f.arrival_iata ? `<span class="airport-name">${f.arrival_name}</span>` : ''}
-                        </div>
+                <div class="fl-route-block">
+                    <div class="fl-route-end">
+                        <div class="fl-iata${dep ? '' : ' fl-iata-sm'}">${depDisplay}</div>
+                        ${depName && dep ? `<div class="fl-airport-name">${depName}</div>` : ''}
                     </div>
-                    <div class="flight-times">
-                        ${f.actual_departure ? `<span>🛫 ${Utils.formatDateTime(f.actual_departure)}</span>` : 
-                          (f.scheduled_departure ? `<span>🛫 ${Utils.formatDateTime(f.scheduled_departure)}</span>` : '')}
-                        ${f.scheduled_arrival ? `<span>🛬 ${Utils.formatDateTime(f.scheduled_arrival)}</span>` : ''}
+                    <div class="fl-route-center">
+                        <div class="fl-route-arrow-wrap">
+                            <span class="fl-arrow-line"></span>
+                            <span class="fl-arrow-icon">${vehicleIcon}</span>
+                            <span class="fl-arrow-line"></span>
+                        </div>
+                        ${durationBadge}
+                    </div>
+                    <div class="fl-route-end fl-route-end-right">
+                        <div class="fl-iata${arr ? '' : ' fl-iata-sm'}">${arrDisplay}</div>
+                        ${arrName && arr ? `<div class="fl-airport-name fl-airport-name-right">${arrName}</div>` : ''}
                     </div>
                 </div>
+                ${timeHtml ? `<div class="fl-times">${timeHtml}</div>` : ''}
+                ${liveHtml}
                 ${statsHtml}
-                <div class="aircraft-actions" style="margin-top:8px">
-                    ${(f.status === 'active' || f.status === 'landed') ? `
-                        <button class="btn-primary btn-xs btn-view-flight" data-id="${f.id}" data-aircraft="${f.aircraft_id}">View Trail</button>
-                    ` : ''}
-                    <button class="btn-secondary btn-xs btn-edit-flight" data-id="${f.id}">Edit</button>
-                    <button class="btn-danger btn-xs btn-delete-flight" data-id="${f.id}">Delete</button>
-                </div>
-            `;
+                ${routeHtml}
+                ${stopBadgeHtml}
+                <div class="fl-actions">
+                    ${canViewTrail ? `<button class="btn-xs btn-view-flight" data-id="${f.id}" data-aircraft="${f.aircraft_id}">View Trail</button>` : ''}
+                    <button class="btn-xs btn-edit-flight" data-id="${f.id}">Edit</button>
+                    <button class="btn-xs btn-delete-flight" data-id="${f.id}">Delete</button>
+                </div>`;
 
-            // Make the entire card clickable to view the trail if active or landed
-            if (f.status === 'active' || f.status === 'landed') {
-                card.style.cursor = 'pointer';
+            if (canViewTrail) {
                 card.addEventListener('click', (e) => {
-                    if (e.target.closest('.aircraft-actions button')) return;
-                    const title = `${f.flight_number || ''} ${f.departure_iata || ''}→${f.arrival_iata || ''}`;
-                    Timeline.showFlight(f.id, f.aircraft_id, title);
+                    if (e.target.closest('.fl-actions button')) return;
+                    Timeline.showFlight(f.id, f.aircraft_id, Utils.flightName(f, tailNumber));
                 });
             }
 
@@ -622,8 +808,8 @@ const Flights = {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 const f = this.flights.find(fl => fl.id === btn.dataset.id);
-                const title = f ? `${f.flight_number || ''} ${f.departure_iata || ''}→${f.arrival_iata || ''}` : 'Flight';
-                Timeline.showFlight(btn.dataset.id, btn.dataset.aircraft, title);
+                const ac = this.aircraft.find(a => a.id === btn.dataset.aircraft);
+                Timeline.showFlight(btn.dataset.id, btn.dataset.aircraft, f ? Utils.flightName(f, ac?.tail_number) : 'Flight');
             });
         });
 
@@ -637,7 +823,7 @@ const Flights = {
         list.querySelectorAll('.btn-delete-flight').forEach(btn => {
             btn.addEventListener('click', async (e) => {
                 e.stopPropagation();
-                if (!confirm('Delete this flight and its positions?')) return;
+                if (!confirm('Delete this flight and all its position data?')) return;
                 try {
                     await API.deleteFlight(btn.dataset.id);
                     Utils.toast('Flight deleted', 'success');
@@ -966,6 +1152,10 @@ const Flights = {
 
         // Add options HTML
         let html = `
+            <div class="dropdown-item btn-add-flight-for" data-id="${ac.id}">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                Add Flight
+            </div>
             <div class="dropdown-item btn-sync-fa" data-id="${ac.id}">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
                 Sync FlightAware schedules
@@ -1024,6 +1214,12 @@ const Flights = {
         document.body.appendChild(menu);
 
         // Bind inner actions
+        menu.querySelector('.btn-add-flight-for').addEventListener('click', (e) => {
+            e.stopPropagation();
+            menu.remove();
+            this._showAddFlightModal(id);
+        });
+
         menu.querySelector('.btn-sync-fa').addEventListener('click', (e) => {
             e.stopPropagation();
             menu.remove();
