@@ -13,6 +13,9 @@ const FlightMap = {
     _tileLayer: null,
     _labelsOverlay: null,
     _currentPreset: 'street',
+    _airspaceLayers: [],
+    _showAirspace: false,
+    _openaipKey: '',
 
     _presets: {
         night: {
@@ -28,9 +31,9 @@ const FlightMap = {
             satellite: false,
         },
         terrain: {
-            url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Canvas/MapServer/tile/{z}/{y}/{x}',
-            opts: { maxZoom: 16 },
-            attribution: '© <a href="https://www.esri.com/">Esri</a>, HERE, Garmin, © OSM contributors',
+            url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
+            opts: { maxZoom: 19 },
+            attribution: '© <a href="https://www.esri.com/">Esri</a>, HERE, Garmin, USGS, NGA, EPA, NPS',
             satellite: false,
         },
         satellite: {
@@ -39,9 +42,15 @@ const FlightMap = {
             attribution: '© <a href="https://www.esri.com/">Esri</a> · <a href="https://opensky-network.org">OpenSky</a>',
             satellite: true,
         },
+        sectional: {
+            url: 'https://twcgis.tamu.edu/arcgis/rest/services/Aviation/FAA_Sectional_Charts/MapServer/tile/{z}/{y}/{x}',
+            opts: { maxZoom: 14, maxNativeZoom: 13 },
+            attribution: '© <a href="https://twc.tamu.edu/">Texas A&M TWC</a> · FAA Sectional Charts',
+            satellite: false,
+        },
     },
 
-    init() {
+    async init() {
         this.map = L.map('map', {
             center: [39.8283, -98.5795],
             zoom: 4,
@@ -90,6 +99,52 @@ const FlightMap = {
                 btn.classList.add('active');
             });
         });
+
+        // Airspace overlay toggle
+        document.getElementById('btn-toggle-airspace').addEventListener('click', (e) => {
+            this._showAirspace = !this._showAirspace;
+            e.currentTarget.classList.toggle('active', this._showAirspace);
+            localStorage.setItem('mapAirspace', this._showAirspace ? '1' : '0');
+            this._applyAirspaceLayers();
+        });
+
+        // Fetch OpenAIP key and conditionally show the airspace button
+        try {
+            const resp = await fetch('/api/config');
+            const cfg = await resp.json();
+            if (cfg.openaip_api_key) {
+                this._openaipKey = cfg.openaip_api_key;
+                this._buildAirspaceLayers();
+                document.getElementById('btn-toggle-airspace').style.display = '';
+
+                if (localStorage.getItem('mapAirspace') === '1') {
+                    this._showAirspace = true;
+                    document.getElementById('btn-toggle-airspace').classList.add('active');
+                    this._applyAirspaceLayers();
+                }
+            }
+        } catch (e) {
+            console.warn('[Map] Could not load OpenAIP config:', e);
+        }
+    },
+
+    _buildAirspaceLayers() {
+        const key = this._openaipKey;
+        this._airspaceLayers = [
+            L.tileLayer(`https://api.tiles.openaip.net/api/data/airspaces/{z}/{x}/{y}.png?apiKey=${key}`, {
+                maxZoom: 14, opacity: 0.75, tileSize: 256
+            }),
+            L.tileLayer(`https://api.tiles.openaip.net/api/data/navaids/{z}/{x}/{y}.png?apiKey=${key}`, {
+                maxZoom: 14, opacity: 0.9, tileSize: 256
+            }),
+        ];
+    },
+
+    _applyAirspaceLayers() {
+        this._airspaceLayers.forEach(layer => {
+            if (this._showAirspace) layer.addTo(this.map);
+            else layer.remove();
+        });
     },
 
     setPreset(name) {
@@ -115,6 +170,11 @@ const FlightMap = {
         Object.values(this.trails).forEach(segs =>
             segs.forEach(seg => seg.setStyle({ weight: preset.satellite ? 3 : 4, opacity: preset.satellite ? 0.95 : 0.8 }))
         );
+
+        // Re-add airspace layers on top of the new base layer
+        if (this._showAirspace) {
+            this._airspaceLayers.forEach(l => { l.remove(); l.addTo(this.map); });
+        }
     },
 
     /**

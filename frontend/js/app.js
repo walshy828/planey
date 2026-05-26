@@ -12,7 +12,7 @@ const App = {
         Utils.loadTimezone();
 
         // Initialize components
-        FlightMap.init();
+        await FlightMap.init();
         Timeline.init();
         Flights.init();
 

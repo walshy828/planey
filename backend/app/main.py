@@ -193,13 +193,14 @@ app.add_middleware(
 )
 
 # Import and mount routers
-from app.routers import aircraft, flights, positions, settings as settings_router, webhooks
+from app.routers import aircraft, flights, positions, settings as settings_router, webhooks, config as config_router
 
 app.include_router(aircraft.router)
 app.include_router(flights.router)
 app.include_router(positions.router)
 app.include_router(settings_router.router)
 app.include_router(webhooks.router)
+app.include_router(config_router.router)
 
 
 

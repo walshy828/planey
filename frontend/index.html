@@ -220,6 +220,13 @@
                         <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
                     </svg>
                 </button>
+                <button id="btn-toggle-airspace" class="btn-icon map-btn" data-tooltip="Airspace overlay" title="Toggle airspace &amp; navaid overlays" style="display:none;">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <circle cx="12" cy="12" r="6"/>
+                        <circle cx="12" cy="12" r="2"/>
+                    </svg>
+                </button>
                 <div class="map-style-picker">
                     <button class="map-btn map-style-btn" data-preset="night" data-tooltip="Night">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none">
@@ -249,6 +256,15 @@
                             <circle cx="12" cy="12" r="10"/>
                             <line x1="2" y1="12" x2="22" y2="12"/>
                             <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                        </svg>
+                    </button>
+                    <button class="map-btn map-style-btn" data-preset="sectional" data-tooltip="Sectional">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="3" width="18" height="18" rx="1"/>
+                            <line x1="3" y1="9" x2="21" y2="9"/>
+                            <line x1="3" y1="15" x2="21" y2="15"/>
+                            <line x1="9" y1="3" x2="9" y2="21"/>
+                            <line x1="15" y1="3" x2="15" y2="21"/>
                         </svg>
                     </button>
                 </div>
@@ -765,10 +781,10 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="/js/utils.js?v=7"></script>
     <script src="/js/api.js?v=7"></script>
-    <script src="/js/map.js?v=8"></script>
+    <script src="/js/map.js?v=9"></script>
     <script src="/js/timeline.js?v=7"></script>
     <script src="/js/flights.js?v=7"></script>
     <script src="/js/auditor.js?v=7"></script>
-    <script src="/js/app.js?v=7"></script>
+    <script src="/js/app.js?v=8"></script>
 </body>
 </html>

@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     # --- Webhooks ---
     webhook_token: Optional[str] = None
 
+    # --- Aviation Chart Overlays ---
+    openaip_api_key: Optional[str] = Field(None, alias="OPENAIP_API_KEY")
+
     @property
     def database_url(self) -> str:
         """Construct async PostgreSQL connection URL."""
