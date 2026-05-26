@@ -5,100 +5,73 @@
 
 const FlightMap = {
     map: null,
-    markers: {},       // aircraft_id → L.marker
-    trails: {},        // aircraft_id → L.polyline array (segments)
-    plannedRoutes: {}, // aircraft_id → L.polyline (dashed route)
-    airportMarkers: {}, // iata → L.circleMarker
+    markers: {},
+    trails: {},
+    plannedRoutes: {},
+    airportMarkers: {},
     showTrails: true,
-    _tileLayers: null,
+    _tileLayer: null,
     _labelsOverlay: null,
-    _currentLayerName: 'dark',
-    _currentProvider: 'carto',
+    _currentPreset: 'street',
 
-    _providers: {
-        carto: {
-            dark: {
-                url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-                opts: { maxZoom: 19, subdomains: 'abcd' },
-                attribution: '© <a href="https://carto.com/">CARTO</a> · © <a href="https://www.openstreetmap.org/copyright">OSM</a>'
-            },
-            light: {
-                url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
-                opts: { maxZoom: 19, subdomains: 'abcd' },
-                attribution: '© <a href="https://carto.com/">CARTO</a> · © <a href="https://www.openstreetmap.org/copyright">OSM</a>'
-            }
+    _presets: {
+        night: {
+            url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+            opts: { maxZoom: 19, subdomains: 'abcd' },
+            attribution: '© <a href="https://carto.com/">CARTO</a> · © <a href="https://www.openstreetmap.org/copyright">OSM</a>',
+            satellite: false,
         },
-        esri: {
-            dark: {
-                url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Canvas/MapServer/tile/{z}/{y}/{x}',
-                opts: { maxZoom: 16 },
-                attribution: '© <a href="https://www.esri.com/">Esri</a>, HERE, Garmin, © OSM contributors'
-            },
-            light: {
-                url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Canvas/MapServer/tile/{z}/{y}/{x}',
-                opts: { maxZoom: 16 },
-                attribution: '© <a href="https://www.esri.com/">Esri</a>, HERE, Garmin, © OSM contributors'
-            }
+        street: {
+            url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+            opts: { maxZoom: 19 },
+            attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+            satellite: false,
         },
-        osm: {
-            // OSM has no dark mode — fall back to CARTO dark for that view
-            dark: {
-                url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-                opts: { maxZoom: 19, subdomains: 'abcd' },
-                attribution: '© <a href="https://carto.com/">CARTO</a> · © <a href="https://www.openstreetmap.org/copyright">OSM</a>'
-            },
-            light: {
-                url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-                opts: { maxZoom: 19 },
-                attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-            }
-        }
+        terrain: {
+            url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Canvas/MapServer/tile/{z}/{y}/{x}',
+            opts: { maxZoom: 16 },
+            attribution: '© <a href="https://www.esri.com/">Esri</a>, HERE, Garmin, © OSM contributors',
+            satellite: false,
+        },
+        satellite: {
+            url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+            opts: { maxZoom: 19 },
+            attribution: '© <a href="https://www.esri.com/">Esri</a> · <a href="https://opensky-network.org">OpenSky</a>',
+            satellite: true,
+        },
     },
-
-    _satelliteDef: {
-        url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-        opts: { maxZoom: 19 },
-        attribution: '© <a href="https://www.esri.com/">Esri</a> · <a href="https://opensky-network.org">OpenSky</a>'
-    },
-
-    _layerDefs: null,
 
     init() {
         this.map = L.map('map', {
-            center: [39.8283, -98.5795], // Center US
+            center: [39.8283, -98.5795],
             zoom: 4,
             zoomControl: true,
             attributionControl: false
         });
 
-        // Restore saved provider preference
-        const savedProvider = localStorage.getItem('mapProvider');
-        if (savedProvider && this._providers[savedProvider]) {
-            this._currentProvider = savedProvider;
-        }
+        // Restore saved preset; default to 'street'
+        const saved = localStorage.getItem('mapPreset');
+        if (saved && this._presets[saved]) this._currentPreset = saved;
 
-        // Build layer definitions for current provider
-        this._layerDefs = this._buildLayerDefs();
+        // Build single tile layer from preset
+        const preset = this._presets[this._currentPreset];
+        this._tileLayer = L.tileLayer(preset.url, preset.opts);
+        this._tileLayer.addTo(this.map);
 
-        // Build tile layer instances
-        this._tileLayers = {};
-        for (const [name, def] of Object.entries(this._layerDefs)) {
-            this._tileLayers[name] = L.tileLayer(def.url, def.opts);
-        }
-        this._tileLayers.dark.addTo(this.map);
-
-        // Transparent labels overlay for satellite view (towns, rivers, airports, POIs)
+        // Transparent labels overlay for satellite view
         this._labelsOverlay = L.tileLayer(
             'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
             { maxZoom: 19, opacity: 1 }
         );
+        if (preset.satellite) this._labelsOverlay.addTo(this.map);
 
-        // Attribution control (updated on layer switch)
+        // Attribution control
         this._attribution = L.control.attribution({ prefix: false, position: 'bottomleft' });
         this._attribution.addTo(this.map);
-        this._attribution.addAttribution(this._layerDefs.dark.attribution);
+        this._currentAttribution = preset.attribution;
+        this._attribution.addAttribution(preset.attribution);
 
-        // Controls
+        // Action buttons
         document.getElementById('btn-center-all').addEventListener('click', () => this.updateDefaultMapView());
         document.getElementById('btn-toggle-trails').addEventListener('click', (e) => {
             this.showTrails = !this.showTrails;
@@ -106,79 +79,42 @@ const FlightMap = {
             this._toggleTrails();
         });
 
-        // Layer switcher buttons
-        document.querySelectorAll('.map-layer-btn').forEach(btn => {
+        // Preset style buttons
+        document.querySelectorAll('.map-style-btn[data-preset]').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.preset === this._currentPreset);
             btn.addEventListener('click', () => {
-                const layer = btn.dataset.layer;
-                if (layer === this._currentLayerName) return;
-                this.setLayer(layer);
-                document.querySelectorAll('.map-layer-btn').forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-            });
-        });
-
-        // Provider switcher buttons — mark saved preference active on load
-        document.querySelectorAll('.map-provider-btn').forEach(btn => {
-            btn.classList.toggle('active', btn.dataset.provider === this._currentProvider);
-            btn.addEventListener('click', () => {
-                const provider = btn.dataset.provider;
-                if (provider === this._currentProvider) return;
-                this.setProvider(provider);
-                document.querySelectorAll('.map-provider-btn').forEach(b => b.classList.remove('active'));
+                const name = btn.dataset.preset;
+                if (name === this._currentPreset) return;
+                this.setPreset(name);
+                document.querySelectorAll('.map-style-btn').forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
             });
         });
     },
 
-    setLayer(name) {
-        if (!this._tileLayers[name]) return;
-        this._tileLayers[this._currentLayerName].remove();
-        this._currentLayerName = name;
-        this._tileLayers[name].addTo(this.map);
+    setPreset(name) {
+        const preset = this._presets[name];
+        if (!preset) return;
 
-        // Add/remove the labels overlay for satellite (dark/light have built-in labels)
-        const isSatellite = name === 'satellite';
-        if (isSatellite) {
-            this._labelsOverlay.addTo(this.map);
-        } else {
-            this._labelsOverlay.remove();
-        }
+        this._tileLayer.remove();
+        this._labelsOverlay.remove();
 
-        // Satellite view: lighten trail colors so they read against imagery
+        this._currentPreset = name;
+        localStorage.setItem('mapPreset', name);
+
+        this._tileLayer = L.tileLayer(preset.url, preset.opts);
+        this._tileLayer.addTo(this.map);
+
+        if (preset.satellite) this._labelsOverlay.addTo(this.map);
+
+        this._attribution.removeAttribution(this._currentAttribution);
+        this._attribution.addAttribution(preset.attribution);
+        this._currentAttribution = preset.attribution;
+
+        // Adjust trail weight/opacity for satellite vs vector
         Object.values(this.trails).forEach(segs =>
-            segs.forEach(seg => seg.setStyle({ weight: isSatellite ? 3 : 4, opacity: isSatellite ? 0.95 : 0.8 }))
+            segs.forEach(seg => seg.setStyle({ weight: preset.satellite ? 3 : 4, opacity: preset.satellite ? 0.95 : 0.8 }))
         );
-    },
-
-    _buildLayerDefs() {
-        const p = this._providers[this._currentProvider];
-        return {
-            dark: p.dark,
-            light: p.light,
-            satellite: this._satelliteDef
-        };
-    },
-
-    setProvider(name) {
-        if (!this._providers[name] || name === this._currentProvider) return;
-        this._currentProvider = name;
-        localStorage.setItem('mapProvider', name);
-
-        const p = this._providers[name];
-        const onDarkOrLight = this._currentLayerName === 'dark' || this._currentLayerName === 'light';
-
-        if (onDarkOrLight) {
-            this._tileLayers[this._currentLayerName].remove();
-        }
-
-        // Rebuild dark/light tile layers for the new provider
-        this._tileLayers.dark = L.tileLayer(p.dark.url, p.dark.opts);
-        this._tileLayers.light = L.tileLayer(p.light.url, p.light.opts);
-        this._layerDefs = this._buildLayerDefs();
-
-        if (onDarkOrLight) {
-            this._tileLayers[this._currentLayerName].addTo(this.map);
-        }
     },
 
     /**

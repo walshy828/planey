@@ -15,7 +15,7 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
     <!-- App CSS -->
-    <link rel="stylesheet" href="css/styles.css?v=9">
+    <link rel="stylesheet" href="css/styles.css?v=10">
 
     <!-- Favicon -->
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✈️</text></svg>">
@@ -206,7 +206,7 @@
 
             <!-- Map Overlay Controls -->
             <div class="map-controls">
-                <button id="btn-center-all" class="btn-icon map-btn" title="Center on all aircraft">
+                <button id="btn-center-all" class="btn-icon map-btn" data-tooltip="Center map" title="Center on all aircraft">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="12" cy="12" r="10"></circle>
                         <line x1="22" y1="12" x2="18" y2="12"></line>
@@ -215,18 +215,18 @@
                         <line x1="12" y1="22" x2="12" y2="18"></line>
                     </svg>
                 </button>
-                <button id="btn-toggle-trails" class="btn-icon map-btn active" title="Toggle flight trails">
+                <button id="btn-toggle-trails" class="btn-icon map-btn active" data-tooltip="Toggle trails" title="Toggle flight trails">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
                     </svg>
                 </button>
-                <div class="map-layer-control">
-                    <button class="map-btn map-layer-btn active" data-layer="dark" title="Dark map">
+                <div class="map-style-picker">
+                    <button class="map-btn map-style-btn" data-preset="night" data-tooltip="Night">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none">
                             <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
                         </svg>
                     </button>
-                    <button class="map-btn map-layer-btn" data-layer="light" title="Daylight map">
+                    <button class="map-btn map-style-btn" data-preset="street" data-tooltip="Street">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <circle cx="12" cy="12" r="5"/>
                             <line x1="12" y1="1" x2="12" y2="3"/>
@@ -239,18 +239,18 @@
                             <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
                         </svg>
                     </button>
-                    <button class="map-btn map-layer-btn" data-layer="satellite" title="Satellite view">
+                    <button class="map-btn map-style-btn" data-preset="terrain" data-tooltip="Terrain">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="12 2 2 20 22 20"/>
+                        </svg>
+                    </button>
+                    <button class="map-btn map-style-btn" data-preset="satellite" data-tooltip="Satellite">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <circle cx="12" cy="12" r="10"/>
                             <line x1="2" y1="12" x2="22" y2="12"/>
                             <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
                         </svg>
                     </button>
-                    <div class="map-provider-control">
-                        <button class="map-provider-btn active" data-provider="carto" title="CARTO — clean, minimal (great for data viz)">CARTO</button>
-                        <button class="map-provider-btn" data-provider="esri" title="Esri — detailed terrain and labels">ESRI</button>
-                        <button class="map-provider-btn" data-provider="osm" title="OpenStreetMap — highly detailed street maps">OSM</button>
-                    </div>
                 </div>
             </div>
 
@@ -765,7 +765,7 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="/js/utils.js?v=7"></script>
     <script src="/js/api.js?v=7"></script>
-    <script src="/js/map.js?v=7"></script>
+    <script src="/js/map.js?v=8"></script>
     <script src="/js/timeline.js?v=7"></script>
     <script src="/js/flights.js?v=7"></script>
     <script src="/js/auditor.js?v=7"></script>

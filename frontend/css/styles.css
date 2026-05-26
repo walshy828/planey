@@ -589,8 +589,8 @@ body {
 /* --- Altitude Legend --- */
 .altitude-legend {
     position: absolute;
-    bottom: 80px;
-    right: 12px;
+    bottom: 30px;
+    left: 12px;
     z-index: 500;
     background: var(--bg-glass);
     backdrop-filter: blur(12px);
@@ -721,7 +721,7 @@ body {
     .sidebar.open { transform: translateX(0); }
     .header-center { display: none; }
     .btn-primary span { display: none; }
-    .altitude-legend { bottom: 20px; }
+    .altitude-legend { bottom: 20px; left: 8px; }
     .map-controls { top: 8px; right: 8px; }
 }
 
@@ -1754,8 +1754,8 @@ input:checked + .slider:before {
     border-color: rgba(255,82,82,0.3);
 }
 
-/* ── Map Layer Switcher ────────────────────────────────────────────────── */
-.map-layer-control {
+/* ── Map Style Preset Picker ───────────────────────────────────────────── */
+.map-style-picker {
     display: flex;
     flex-direction: column;
     gap: 2px;
@@ -1764,7 +1764,7 @@ input:checked + .slider:before {
     padding-top: 4px;
 }
 
-.map-layer-btn {
+.map-style-btn {
     width: 36px;
     height: 30px;
     display: flex;
@@ -1774,40 +1774,45 @@ input:checked + .slider:before {
     position: relative;
 }
 
-.map-layer-btn.active {
+.map-style-btn.active {
     color: var(--accent);
     background: rgba(0, 212, 255, 0.12);
     border-radius: 6px;
 }
 
-.map-layer-btn:not(.active):hover {
+.map-style-btn:not(.active):hover {
     color: var(--text-secondary);
 }
 
-/* Provider selector chips inside the layer control */
-.map-provider-control {
-    display: flex;
-    gap: 2px;
-    margin-top: 6px;
-    padding-top: 6px;
-    border-top: 1px solid rgba(255,255,255,0.08);
+/* CSS tooltips for map buttons (appear to the left) */
+.map-btn[data-tooltip] {
+    position: relative;
 }
-.map-provider-btn {
-    flex: 1;
-    font-size: 9px;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    padding: 4px 0;
-    border-radius: 4px;
-    color: var(--text-muted);
-    background: none;
-    border: 1px solid transparent;
-    cursor: pointer;
-    transition: color 0.15s, background 0.15s;
-    text-align: center;
+
+.map-btn[data-tooltip]::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    right: calc(100% + 10px);
+    top: 50%;
+    transform: translateY(-50%);
+    background: rgba(10, 14, 22, 0.95);
+    color: var(--text-primary);
+    font-size: 11px;
+    font-weight: 500;
+    padding: 4px 9px;
+    border-radius: 5px;
+    border: 1px solid rgba(255,255,255,0.1);
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+    z-index: 600;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.5);
 }
-.map-provider-btn:hover { color: var(--text-secondary); background: rgba(255,255,255,0.05); }
-.map-provider-btn.active { color: var(--accent); background: rgba(0,212,255,0.1); border-color: rgba(0,212,255,0.25); }
+
+.map-btn[data-tooltip]:hover::after {
+    opacity: 1;
+}
 
 /* Rich track tooltip */
 .leaflet-tooltip.trail-tooltip {
@@ -1927,6 +1932,7 @@ input:checked + .slider:before {
     .fl-iata { font-size: 19px; }
     .fl-times { font-size: 11px; }
     .fl-time-airborne { margin-left: 0; }
-    .map-layer-control { flex-direction: row; margin-top: 0; margin-left: 4px; border-top: none; border-left: 1px solid rgba(255,255,255,0.08); padding-top: 0; padding-left: 4px; }
+    .map-style-picker { flex-direction: row; margin-top: 0; margin-left: 4px; border-top: none; border-left: 1px solid rgba(255,255,255,0.08); padding-top: 0; padding-left: 4px; }
+    .map-btn[data-tooltip]::after { display: none; }
 }
 
