@@ -13,24 +13,55 @@ const FlightMap = {
     _tileLayers: null,
     _labelsOverlay: null,
     _currentLayerName: 'dark',
+    _currentProvider: 'carto',
 
-    _layerDefs: {
-        dark: {
-            url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-            opts: { maxZoom: 19, subdomains: 'abcd' },
-            attribution: '© <a href="https://carto.com/">CARTO</a> · <a href="https://opensky-network.org">OpenSky</a>'
+    _providers: {
+        carto: {
+            dark: {
+                url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+                opts: { maxZoom: 19, subdomains: 'abcd' },
+                attribution: '© <a href="https://carto.com/">CARTO</a> · © <a href="https://www.openstreetmap.org/copyright">OSM</a>'
+            },
+            light: {
+                url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+                opts: { maxZoom: 19, subdomains: 'abcd' },
+                attribution: '© <a href="https://carto.com/">CARTO</a> · © <a href="https://www.openstreetmap.org/copyright">OSM</a>'
+            }
         },
-        light: {
-            url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
-            opts: { maxZoom: 19, subdomains: 'abcd' },
-            attribution: '© <a href="https://carto.com/">CARTO</a> · <a href="https://opensky-network.org">OpenSky</a>'
+        esri: {
+            dark: {
+                url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Canvas/MapServer/tile/{z}/{y}/{x}',
+                opts: { maxZoom: 16 },
+                attribution: '© <a href="https://www.esri.com/">Esri</a>, HERE, Garmin, © OSM contributors'
+            },
+            light: {
+                url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Canvas/MapServer/tile/{z}/{y}/{x}',
+                opts: { maxZoom: 16 },
+                attribution: '© <a href="https://www.esri.com/">Esri</a>, HERE, Garmin, © OSM contributors'
+            }
         },
-        satellite: {
-            url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-            opts: { maxZoom: 19 },
-            attribution: '© <a href="https://www.esri.com/">Esri</a> · <a href="https://opensky-network.org">OpenSky</a>'
+        osm: {
+            // OSM has no dark mode — fall back to CARTO dark for that view
+            dark: {
+                url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+                opts: { maxZoom: 19, subdomains: 'abcd' },
+                attribution: '© <a href="https://carto.com/">CARTO</a> · © <a href="https://www.openstreetmap.org/copyright">OSM</a>'
+            },
+            light: {
+                url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+                opts: { maxZoom: 19 },
+                attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            }
         }
     },
+
+    _satelliteDef: {
+        url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        opts: { maxZoom: 19 },
+        attribution: '© <a href="https://www.esri.com/">Esri</a> · <a href="https://opensky-network.org">OpenSky</a>'
+    },
+
+    _layerDefs: null,
 
     init() {
         this.map = L.map('map', {
@@ -39,6 +70,15 @@ const FlightMap = {
             zoomControl: true,
             attributionControl: false
         });
+
+        // Restore saved provider preference
+        const savedProvider = localStorage.getItem('mapProvider');
+        if (savedProvider && this._providers[savedProvider]) {
+            this._currentProvider = savedProvider;
+        }
+
+        // Build layer definitions for current provider
+        this._layerDefs = this._buildLayerDefs();
 
         // Build tile layer instances
         this._tileLayers = {};
@@ -76,6 +116,18 @@ const FlightMap = {
                 btn.classList.add('active');
             });
         });
+
+        // Provider switcher buttons — mark saved preference active on load
+        document.querySelectorAll('.map-provider-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.provider === this._currentProvider);
+            btn.addEventListener('click', () => {
+                const provider = btn.dataset.provider;
+                if (provider === this._currentProvider) return;
+                this.setProvider(provider);
+                document.querySelectorAll('.map-provider-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            });
+        });
     },
 
     setLayer(name) {
@@ -96,6 +148,37 @@ const FlightMap = {
         Object.values(this.trails).forEach(segs =>
             segs.forEach(seg => seg.setStyle({ weight: isSatellite ? 3 : 4, opacity: isSatellite ? 0.95 : 0.8 }))
         );
+    },
+
+    _buildLayerDefs() {
+        const p = this._providers[this._currentProvider];
+        return {
+            dark: p.dark,
+            light: p.light,
+            satellite: this._satelliteDef
+        };
+    },
+
+    setProvider(name) {
+        if (!this._providers[name] || name === this._currentProvider) return;
+        this._currentProvider = name;
+        localStorage.setItem('mapProvider', name);
+
+        const p = this._providers[name];
+        const onDarkOrLight = this._currentLayerName === 'dark' || this._currentLayerName === 'light';
+
+        if (onDarkOrLight) {
+            this._tileLayers[this._currentLayerName].remove();
+        }
+
+        // Rebuild dark/light tile layers for the new provider
+        this._tileLayers.dark = L.tileLayer(p.dark.url, p.dark.opts);
+        this._tileLayers.light = L.tileLayer(p.light.url, p.light.opts);
+        this._layerDefs = this._buildLayerDefs();
+
+        if (onDarkOrLight) {
+            this._tileLayers[this._currentLayerName].addTo(this.map);
+        }
     },
 
     /**
@@ -147,7 +230,7 @@ const FlightMap = {
 
         // Add trail segment
         if (this.showTrails) {
-            this._addTrailPoint(aircraftId, pos, altitude_ft);
+            this._addTrailPoint(aircraftId, pos, data);
         }
     },
 
@@ -192,15 +275,16 @@ const FlightMap = {
     /**
      * Add a single trail point (for real-time updates)
      */
-    _addTrailPoint(aircraftId, pos, altFt) {
+    _addTrailPoint(aircraftId, pos, posData) {
         if (!this.trails[aircraftId]) this.trails[aircraftId] = [];
         const segments = this.trails[aircraftId];
+        const altFt = posData?.altitude_ft;
 
         if (segments.length > 0) {
             const last = segments[segments.length - 1];
             const latLngs = last.getLatLngs();
             const lastPos = latLngs[latLngs.length - 1];
-            
+
             // Prevent drawing a line if the jump is too large (likely a stale position or new flight)
             // Increased to 500km to allow for OpenSky coverage gaps before fallback kicks in
             const dist = L.latLng(lastPos).distanceTo(L.latLng(pos));
@@ -211,11 +295,8 @@ const FlightMap = {
 
             const color = Utils.altitudeColor(altFt);
             const seg = L.polyline([lastPos, pos], { color, weight: 4, opacity: 0.8 });
-            
-            seg.bindTooltip(this._trailTooltipHtml({
-                altitude_ft: altFt,
-                timestamp: new Date().toISOString()
-            }), {
+
+            seg.bindTooltip(this._trailTooltipHtml(posData || { altitude_ft: altFt, timestamp: new Date().toISOString() }), {
                 className: 'trail-tooltip',
                 direction: 'top',
                 sticky: true,
@@ -422,13 +503,56 @@ const FlightMap = {
     },
 
     _trailTooltipHtml(pos) {
-        return `
-            <div style="font-size:11px; line-height:1.2">
-                <div style="color:#00d4ff; font-weight:bold">${Utils.formatDateTime(pos.timestamp)}</div>
-                <div>Alt: ${Utils.formatAlt(pos.altitude_ft)}</div>
-                ${pos.ground_speed_kts ? `<div>Spd: ${Utils.formatSpeed(pos.ground_speed_kts)}</div>` : ''}
+        const phase = Utils.flightPhase(pos.vertical_rate_fpm, pos.on_ground);
+        const fl = Utils.flightLevel(pos.altitude_ft);
+        const altColor = Utils.altitudeColor(pos.altitude_ft);
+        const compass = Utils.compassDirection(pos.heading);
+
+        const altHtml = fl
+            ? `<div class="tt-value" style="color:${altColor}">${fl}</div><div class="tt-sub">${Utils.formatAlt(pos.altitude_ft)}</div>`
+            : `<div class="tt-value" style="color:${altColor}">${Utils.formatAlt(pos.altitude_ft)}</div>`;
+
+        const vr = pos.vertical_rate_fpm;
+        const vrDisplay = vr != null ? (vr > 0 ? `+${Math.round(vr).toLocaleString()}` : Math.round(vr).toLocaleString()) : '—';
+        const vrCls = vr == null ? '' : (vr > 200 ? 'tt-vs-up' : (vr < -200 ? 'tt-vs-down' : 'tt-vs-level'));
+
+        const squawk = pos.squawk;
+        const emergencyLabels = { '7500': 'HIJACK', '7600': 'RADIO FAIL', '7700': 'EMERGENCY' };
+        const squawkHtml = squawk && squawk !== '0000' ? `
+            <div class="tt-squawk-row">
+                <span class="tt-label">SQUAWK</span>
+                <span class="tt-squawk-val${emergencyLabels[squawk] ? ' tt-squawk-emerg' : squawk === '1200' ? ' tt-squawk-vfr' : ''}">
+                    ${squawk}${emergencyLabels[squawk] ? ' ⚠ ' + emergencyLabels[squawk] : squawk === '1200' ? ' VFR' : ''}
+                </span>
+            </div>` : '';
+
+        return `<div class="track-tooltip">
+            <div class="tt-header">
+                <span class="tt-time">${Utils.formatDateTimeSecs(pos.timestamp)}</span>
+                <span class="tt-phase ${phase.cls}">${phase.arrow}${phase.arrow ? ' ' : ''}${phase.label}</span>
             </div>
-        `;
+            <div class="tt-grid">
+                <div class="tt-cell">
+                    <div class="tt-label">ALTITUDE</div>
+                    ${altHtml}
+                </div>
+                <div class="tt-cell">
+                    <div class="tt-label">SPEED</div>
+                    <div class="tt-value">${pos.ground_speed_kts != null ? Math.round(pos.ground_speed_kts) : '—'}<span class="tt-unit">kts</span></div>
+                </div>
+                <div class="tt-cell">
+                    <div class="tt-label">COURSE</div>
+                    <div class="tt-value">${pos.heading != null ? Math.round(pos.heading) + '°' : '—'}</div>
+                    ${compass ? `<div class="tt-sub">${compass}</div>` : ''}
+                </div>
+                <div class="tt-cell">
+                    <div class="tt-label">VERT SPEED</div>
+                    <div class="tt-value ${vrCls}">${vrDisplay}</div>
+                    ${vr != null ? '<div class="tt-sub">ft/min</div>' : ''}
+                </div>
+            </div>
+            ${squawkHtml}
+        </div>`;
     },
 
     _tooltipHtml(data) {

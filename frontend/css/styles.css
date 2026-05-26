@@ -1784,6 +1784,93 @@ input:checked + .slider:before {
     color: var(--text-secondary);
 }
 
+/* Provider selector chips inside the layer control */
+.map-provider-control {
+    display: flex;
+    gap: 2px;
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+}
+.map-provider-btn {
+    flex: 1;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    padding: 4px 0;
+    border-radius: 4px;
+    color: var(--text-muted);
+    background: none;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: color 0.15s, background 0.15s;
+    text-align: center;
+}
+.map-provider-btn:hover { color: var(--text-secondary); background: rgba(255,255,255,0.05); }
+.map-provider-btn.active { color: var(--accent); background: rgba(0,212,255,0.1); border-color: rgba(0,212,255,0.25); }
+
+/* Rich track tooltip */
+.leaflet-tooltip.trail-tooltip {
+    background: rgba(10, 14, 22, 0.96);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 8px;
+    padding: 0;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.65);
+    color: #e0e6ed;
+    font-family: var(--font, 'Inter', sans-serif);
+    white-space: normal;
+}
+.leaflet-tooltip.trail-tooltip.leaflet-tooltip-top::before {
+    border-top-color: rgba(10, 14, 22, 0.96);
+}
+.track-tooltip { padding: 8px 10px; min-width: 190px; }
+.tt-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 7px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.tt-time { font-size: 10px; color: #8899aa; letter-spacing: 0.01em; }
+.tt-phase { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; white-space: nowrap; }
+.tt-climbing  { color: #00ff88; }
+.tt-descending { color: #ff6644; }
+.tt-cruise    { color: #00d4ff; }
+.tt-ground    { color: #8899aa; }
+.tt-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 7px 12px;
+}
+.tt-label {
+    font-size: 9px;
+    color: #4a5a6a;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 2px;
+}
+.tt-value { font-size: 15px; font-weight: 700; line-height: 1; color: #e0e6ed; }
+.tt-sub   { font-size: 10px; color: #6a7a8a; margin-top: 2px; }
+.tt-unit  { font-size: 10px; font-weight: 400; color: #6a7a8a; margin-left: 2px; }
+.tt-vs-up   { color: #00ff88; }
+.tt-vs-down { color: #ff6644; }
+.tt-vs-level { color: #8899aa; }
+.tt-squawk-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 7px;
+    padding-top: 6px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    font-size: 11px;
+}
+.tt-squawk-val   { font-weight: 600; color: #aabbcc; }
+.tt-squawk-emerg { color: #ff3333; font-weight: 700; }
+.tt-squawk-vfr   { color: #8899aa; }
+
 /* ── Airborne indicator (pulsing dot) ─────────────────────────────────── */
 .airborne-indicator {
     display: inline-block;

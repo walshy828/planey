@@ -371,7 +371,7 @@ const TelemetryAuditor = {
                 tr.className = 'anomaly-row';
             }
 
-            const timeStr = new Date(p.timestamp).toISOString().replace('T', ' ').substring(0, 19);
+            const timeStr = Utils.formatDateTimeSecs(p.timestamp);
 
             // Create cells, applying anomaly formatting
             const getTd = (val, fieldName) => {
@@ -607,7 +607,7 @@ const TelemetryAuditor = {
         let optionsHtml = '';
         targetFlights.forEach(f => {
             const routeStr = `${f.departure_iata || '???'} → ${f.arrival_iata || '???'}`;
-            const label = `${f.flight_number || f.callsign || 'Unknown'} (${routeStr}) - ${f.status} (${new Date(f.created_at).toLocaleDateString()})`;
+            const label = `${f.flight_number || f.callsign || 'Unknown'} (${routeStr}) - ${f.status} (${Utils.formatDateShort(f.created_at)})`;
             optionsHtml += `<option value="${f.id}" ${f.id === this.selectedFlightId ? 'selected' : ''}>${label}</option>`;
         });
 

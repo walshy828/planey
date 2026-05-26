@@ -246,6 +246,11 @@
                             <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
                         </svg>
                     </button>
+                    <div class="map-provider-control">
+                        <button class="map-provider-btn active" data-provider="carto" title="CARTO — clean, minimal (great for data viz)">CARTO</button>
+                        <button class="map-provider-btn" data-provider="esri" title="Esri — detailed terrain and labels">ESRI</button>
+                        <button class="map-provider-btn" data-provider="osm" title="OpenStreetMap — highly detailed street maps">OSM</button>
+                    </div>
                 </div>
             </div>
 
@@ -435,6 +440,34 @@
                 </button>
             </div>
             <div class="modal-body">
+                <div class="form-group">
+                    <label for="set-timezone">Display Timezone</label>
+                    <select id="set-timezone" class="select-input">
+                        <optgroup label="United States">
+                            <option value="America/New_York">Eastern (EST/EDT)</option>
+                            <option value="America/Chicago">Central (CST/CDT)</option>
+                            <option value="America/Denver">Mountain (MST/MDT)</option>
+                            <option value="America/Los_Angeles">Pacific (PST/PDT)</option>
+                            <option value="America/Anchorage">Alaska (AKST/AKDT)</option>
+                            <option value="Pacific/Honolulu">Hawaii (HST)</option>
+                        </optgroup>
+                        <optgroup label="Europe">
+                            <option value="Europe/London">London (GMT/BST)</option>
+                            <option value="Europe/Paris">Paris (CET/CEST)</option>
+                            <option value="Europe/Berlin">Berlin (CET/CEST)</option>
+                        </optgroup>
+                        <optgroup label="Asia / Pacific">
+                            <option value="Asia/Dubai">Dubai (GST)</option>
+                            <option value="Asia/Tokyo">Tokyo (JST)</option>
+                            <option value="Asia/Shanghai">Shanghai (CST)</option>
+                            <option value="Australia/Sydney">Sydney (AEST/AEDT)</option>
+                        </optgroup>
+                        <optgroup label="Universal">
+                            <option value="UTC">UTC</option>
+                        </optgroup>
+                    </select>
+                    <span class="form-hint">All times throughout the app will display in this timezone.</span>
+                </div>
                 <div class="form-group">
                     <label for="set-polling-interval">Polling Interval (Airborne)</label>
                     <div class="input-with-unit">

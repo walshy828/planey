@@ -4,6 +4,22 @@
  */
 
 const Utils = {
+    _timezone: 'America/New_York',
+
+    getTimezone() { return this._timezone; },
+
+    setTimezone(tz) {
+        this._timezone = tz || 'America/New_York';
+        try { localStorage.setItem('planey_timezone', this._timezone); } catch (e) {}
+    },
+
+    loadTimezone() {
+        try {
+            const saved = localStorage.getItem('planey_timezone');
+            if (saved) this._timezone = saved;
+        } catch (e) {}
+    },
+
     /**
      * Get altitude color based on feet (Aviation standard scale)
      * Orange(0) → Yellow(4K) → Green(8K) → Cyan(10K-20K) → Blue(30K) → Purple(40K+)
@@ -41,13 +57,41 @@ const Utils = {
     formatTime(iso) {
         if (!iso) return '—';
         const d = new Date(iso);
-        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: this.getTimezone() });
     },
 
     formatDateTime(iso) {
         if (!iso) return '—';
+        const tz = this.getTimezone();
         const d = new Date(iso);
-        return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        return d.toLocaleDateString([], { month: 'short', day: 'numeric', timeZone: tz }) + ' ' +
+               d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: tz });
+    },
+
+    formatDateTimeSecs(iso) {
+        if (!iso) return '—';
+        const tz = this.getTimezone();
+        const d = new Date(iso);
+        return d.toLocaleDateString([], { month: 'short', day: 'numeric', timeZone: tz }) + ' · ' +
+               d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: tz });
+    },
+
+    compassDirection(deg) {
+        if (deg == null) return null;
+        const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+        return dirs[Math.round(((deg % 360) + 360) % 360 / 22.5) % 16];
+    },
+
+    flightLevel(ft) {
+        if (ft == null || ft < 18000) return null;
+        return `FL${Math.round(ft / 100)}`;
+    },
+
+    flightPhase(vr, onGround) {
+        if (onGround) return { label: 'ON GROUND', cls: 'tt-ground', arrow: '' };
+        if (vr == null || (vr > -200 && vr < 200)) return { label: 'CRUISE', cls: 'tt-cruise', arrow: '→' };
+        if (vr >= 200) return { label: 'CLIMBING', cls: 'tt-climbing', arrow: '↑' };
+        return { label: 'DESCENDING', cls: 'tt-descending', arrow: '↓' };
     },
 
     timeAgo(iso) {
@@ -89,21 +133,21 @@ const Utils = {
     /** Returns "Today", "Yesterday", day-of-week, or "May 25" for older dates */
     formatRelativeDate(iso) {
         if (!iso) return '—';
+        const tz = this.getTimezone();
         const d = new Date(iso);
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const flightDay = new Date(d);
-        flightDay.setHours(0, 0, 0, 0);
-        const diffDays = Math.round((today - flightDay) / 86400000);
+        const dateInTz = (dt) => new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(dt);
+        const todayStr = dateInTz(new Date());
+        const flightStr = dateInTz(d);
+        const diffDays = Math.round((new Date(todayStr) - new Date(flightStr)) / 86400000);
         if (diffDays === 0) return 'Today';
         if (diffDays === 1) return 'Yesterday';
-        if (diffDays < 7) return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
-        return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+        if (diffDays < 7) return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', timeZone: tz });
+        return d.toLocaleDateString([], { month: 'short', day: 'numeric', timeZone: tz });
     },
 
     formatDateShort(iso) {
         if (!iso) return '—';
-        return new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric' });
+        return new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric', timeZone: this.getTimezone() });
     },
 
     formatDuration(seconds) {

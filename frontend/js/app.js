@@ -9,6 +9,8 @@ const App = {
     async init() {
         console.log('✈ Planey initializing...');
 
+        Utils.loadTimezone();
+
         // Initialize components
         FlightMap.init();
         Timeline.init();
@@ -92,6 +94,8 @@ const App = {
             document.getElementById('set-position-retention-days').value = settings.position_retention_days || '90';
             document.getElementById('set-history-retention-days').value = settings.flight_history_retention_days || '90';
 
+            document.getElementById('set-timezone').value = Utils.getTimezone();
+
             document.getElementById('modal-settings').style.display = '';
         } catch (err) {
             Utils.toast('Failed to load settings', 'error');
@@ -115,6 +119,7 @@ const App = {
 
         try {
             await API.updateSettings(settings);
+            Utils.setTimezone(document.getElementById('set-timezone').value);
             Utils.toast('Settings saved and applied successfully.', 'success');
             this.hideSettings();
         } catch (err) {
