@@ -208,14 +208,30 @@ const TelemetryAuditor = {
         if (!isoString) return '';
         const d = new Date(isoString);
         if (isNaN(d.getTime())) return '';
-        
-        const y = d.getUTCFullYear();
-        const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-        const day = String(d.getUTCDate()).padStart(2, '0');
-        const h = String(d.getUTCHours()).padStart(2, '0');
-        const min = String(d.getUTCMinutes()).padStart(2, '0');
-        
-        return `${y}-${m}-${day}T${h}:${min}`;
+        const tz = Utils.getTimezone();
+        const parts = new Intl.DateTimeFormat('en-CA', {
+            timeZone: tz,
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', hour12: false
+        }).formatToParts(d).reduce((acc, p) => { acc[p.type] = p.value; return acc; }, {});
+        const h = parts.hour === '24' ? '00' : parts.hour;
+        return `${parts.year}-${parts.month}-${parts.day}T${h}:${parts.minute}`;
+    },
+
+    // Convert a "YYYY-MM-DDTHH:MM" string in the user's timezone to a UTC ISO string.
+    _localToUTC(localStr) {
+        const asUTC = new Date(localStr + 'Z').getTime();
+        const inTz = new Date(asUTC).toLocaleString('sv-SE', { timeZone: Utils.getTimezone() }).replace(' ', 'T');
+        const offsetMs = asUTC - new Date(inTz + 'Z').getTime();
+        return new Date(asUTC + offsetMs).toISOString();
+    },
+
+    _tzAbbr() {
+        try {
+            return new Intl.DateTimeFormat('en-US', { timeZone: Utils.getTimezone(), timeZoneName: 'short' })
+                .formatToParts(new Date())
+                .find(p => p.type === 'timeZoneName')?.value || Utils.getTimezone();
+        } catch { return Utils.getTimezone(); }
     },
 
     renderFlightForm(f) {
@@ -238,6 +254,12 @@ const TelemetryAuditor = {
         document.getElementById('audit-sched-arr').value = this.formatISOToLocal(f.scheduled_arrival);
         document.getElementById('audit-act-dep').value = this.formatISOToLocal(f.actual_departure);
         document.getElementById('audit-act-arr').value = this.formatISOToLocal(f.actual_arrival);
+
+        const tzLabel = this._tzAbbr();
+        [1, 2, 3, 4].forEach(n => {
+            const el = document.getElementById(`audit-tz-label-${n}`);
+            if (el) el.textContent = tzLabel;
+        });
         
         document.getElementById('audit-route').value = f.expected_route || '';
 
@@ -267,7 +289,7 @@ const TelemetryAuditor = {
 
         const parseTime = (id) => {
             const val = document.getElementById(id).value;
-            return val === '' ? null : new Date(val + 'Z').toISOString(); // Append Z to store as UTC
+            return val === '' ? null : this._localToUTC(val);
         };
 
         const aircraftVal = document.getElementById('audit-aircraft').value;
