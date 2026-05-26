@@ -43,9 +43,9 @@ const FlightMap = {
             satellite: true,
         },
         sectional: {
-            url: 'https://twcgis.tamu.edu/arcgis/rest/services/Aviation/FAA_Sectional_Charts/MapServer/tile/{z}/{y}/{x}',
-            opts: { maxZoom: 14, maxNativeZoom: 13 },
-            attribution: '© <a href="https://twc.tamu.edu/">Texas A&M TWC</a> · FAA Sectional Charts',
+            url: 'https://tiles.arcgis.com/tiles/ssFJjBXIUyZDrSYZ/arcgis/rest/services/VFR_Sectional/MapServer/tile/{z}/{y}/{x}',
+            opts: { maxZoom: 14, minNativeZoom: 8, maxNativeZoom: 12 },
+            attribution: '© <a href="https://www.faa.gov/">FAA</a> VFR Sectional Charts',
             satellite: false,
         },
     },
@@ -131,11 +131,8 @@ const FlightMap = {
     _buildAirspaceLayers() {
         const key = this._openaipKey;
         this._airspaceLayers = [
-            L.tileLayer(`https://api.tiles.openaip.net/api/data/airspaces/{z}/{x}/{y}.png?apiKey=${key}`, {
-                maxZoom: 14, opacity: 0.75, tileSize: 256
-            }),
-            L.tileLayer(`https://api.tiles.openaip.net/api/data/navaids/{z}/{x}/{y}.png?apiKey=${key}`, {
-                maxZoom: 14, opacity: 0.9, tileSize: 256
+            L.tileLayer(`https://{s}.api.tiles.openaip.net/api/data/openaip/{z}/{x}/{y}.png?apiKey=${key}`, {
+                subdomains: 'abc', minZoom: 7, maxZoom: 17, opacity: 0.8, tileSize: 256
             }),
         ];
     },
