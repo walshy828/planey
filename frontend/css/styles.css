@@ -609,7 +609,7 @@ body {
 }
 .legend-labels { display: flex; justify-content: space-between; font-size: 9px; color: var(--text-muted); font-family: var(--mono); }
 
-/* --- Timeline Bar --- */
+/* --- Timeline Bar (Chart-based) --- */
 .timeline-bar {
     position: absolute;
     bottom: 0;
@@ -619,41 +619,115 @@ body {
     background: var(--bg-glass);
     backdrop-filter: blur(20px);
     border-top: 1px solid var(--border-color);
-    padding: 10px 16px;
+    padding: 7px 12px 6px;
 }
-.timeline-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-.timeline-title { font-size: 13px; font-weight: 500; }
-.timeline-track {
-    width: 100%;
-    height: 6px;
-    background: var(--bg-primary);
-    border-radius: 3px;
+
+.tl-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 5px;
+}
+
+.tl-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    flex-shrink: 0;
+    min-width: 120px;
+}
+
+.tl-readout {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-secondary);
+    overflow: hidden;
+    white-space: nowrap;
+}
+.tl-sep { color: var(--text-muted); opacity: 0.5; }
+.tl-stat-alt { font-weight: 600; transition: color 0.15s; }
+.tl-stat-vr { transition: color 0.15s; }
+
+.tl-actions { display: flex; gap: 4px; flex-shrink: 0; }
+
+/* Chart area */
+.tl-charts {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    cursor: crosshair;
+    user-select: none;
+}
+
+.tl-chart-row {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+}
+
+.tl-chart-ylabel {
+    width: 30px;
+    flex-shrink: 0;
+    font-size: 9px;
+    font-family: var(--mono);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    text-align: right;
+    padding-right: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+}
+
+.tl-chart-inner {
+    flex: 1;
     position: relative;
-    cursor: pointer;
-    margin-bottom: 6px;
+    overflow: hidden;
 }
-.timeline-progress {
-    height: 100%;
-    background: linear-gradient(to right, #ff8000 0%, #ffea00 10%, #00ff00 20%, #00ffb3 25%, #00aaff 50%, #0000ff 75%, #b300ff 100%);
-    border-radius: 3px;
-    width: 0%;
-    transition: width 0.1s;
+
+.tl-chart {
+    display: block;
+    width: 100%;
 }
-.timeline-scrubber {
-    width: 14px;
-    height: 14px;
-    background: var(--accent);
-    border: 2px solid var(--bg-primary);
-    border-radius: 50%;
+.tl-chart-alt { height: 70px; }
+.tl-chart-spd { height: 44px; }
+
+.tl-ymax {
     position: absolute;
-    top: 50%;
-    left: 0%;
-    transform: translate(-50%, -50%);
-    cursor: grab;
-    box-shadow: 0 0 8px var(--accent);
-    transition: left 0.1s;
+    top: 2px;
+    right: 3px;
+    font-size: 8px;
+    font-family: var(--mono);
+    color: rgba(255,255,255,0.28);
+    pointer-events: none;
+    line-height: 1;
 }
-.timeline-info { display: flex; gap: 20px; font-family: var(--mono); font-size: 12px; color: var(--text-secondary); }
+.tl-ymin {
+    position: absolute;
+    bottom: 2px;
+    right: 3px;
+    font-size: 8px;
+    font-family: var(--mono);
+    color: rgba(255,255,255,0.28);
+    pointer-events: none;
+    line-height: 1;
+}
+
+.tl-time-row { margin-top: 2px; }
+.tl-time-axis {
+    flex: 1;
+    display: flex;
+    justify-content: space-between;
+    font-size: 9px;
+    font-family: var(--mono);
+    color: var(--text-muted);
+}
 
 /* --- Filter Buttons --- */
 .flight-filters { display: flex; gap: 4px; }

@@ -15,7 +15,7 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
     <!-- App CSS -->
-    <link rel="stylesheet" href="css/styles.css?v=10">
+    <link rel="stylesheet" href="css/styles.css?v=11">
 
     <!-- Favicon -->
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✈️</text></svg>">
@@ -285,23 +285,63 @@
 
             <!-- Timeline Bar -->
             <div class="timeline-bar" id="timeline-bar" style="display: none;">
-                <div class="timeline-header">
-                    <span class="timeline-title" id="timeline-title">Flight Timeline</span>
-                    <button id="btn-close-timeline" class="btn-icon btn-xs">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <line x1="18" y1="6" x2="6" y2="18"></line>
-                            <line x1="6" y1="6" x2="18" y2="18"></line>
-                        </svg>
-                    </button>
+                <!-- Header: title · telemetry readout · controls -->
+                <div class="tl-header">
+                    <span class="tl-title" id="timeline-title">Flight Timeline</span>
+                    <div class="tl-readout">
+                        <span id="timeline-time" class="tl-stat-time">—</span>
+                        <span class="tl-sep">·</span>
+                        <span id="timeline-alt" class="tl-stat-alt">— ft</span>
+                        <span class="tl-sep">·</span>
+                        <span id="timeline-speed">— kts</span>
+                        <span class="tl-sep">·</span>
+                        <span id="timeline-heading">—°</span>
+                        <span class="tl-sep">·</span>
+                        <span id="timeline-vrate" class="tl-stat-vr">—</span>
+                    </div>
+                    <div class="tl-actions">
+                        <button id="btn-play-timeline" class="btn-icon btn-xs" title="Play">
+                            <svg id="icon-play-pause" width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                                <polygon points="5 3 19 12 5 21 5 3"/>
+                            </svg>
+                        </button>
+                        <button id="btn-close-timeline" class="btn-icon btn-xs" title="Close">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="18" y1="6" x2="6" y2="18"></line>
+                                <line x1="6" y1="6" x2="18" y2="18"></line>
+                            </svg>
+                        </button>
+                    </div>
                 </div>
-                <div class="timeline-track" id="timeline-track">
-                    <div class="timeline-progress" id="timeline-progress"></div>
-                    <div class="timeline-scrubber" id="timeline-scrubber"></div>
-                </div>
-                <div class="timeline-info">
-                    <span id="timeline-time">--:--</span>
-                    <span id="timeline-alt">-- ft</span>
-                    <span id="timeline-speed">-- kts</span>
+
+                <!-- Interactive chart area -->
+                <div class="tl-charts" id="timeline-charts">
+                    <!-- Altitude chart -->
+                    <div class="tl-chart-row">
+                        <span class="tl-chart-ylabel">ALT</span>
+                        <div class="tl-chart-inner">
+                            <svg id="chart-altitude" viewBox="0 0 1000 100" preserveAspectRatio="none" class="tl-chart tl-chart-alt"></svg>
+                            <span class="tl-ymax" id="alt-max-label"></span>
+                            <span class="tl-ymin" id="alt-min-label"></span>
+                        </div>
+                    </div>
+                    <!-- Speed chart -->
+                    <div class="tl-chart-row">
+                        <span class="tl-chart-ylabel">SPD</span>
+                        <div class="tl-chart-inner">
+                            <svg id="chart-speed" viewBox="0 0 1000 100" preserveAspectRatio="none" class="tl-chart tl-chart-spd"></svg>
+                            <span class="tl-ymax" id="spd-max-label"></span>
+                            <span class="tl-ymin" id="spd-min-label">0 kts</span>
+                        </div>
+                    </div>
+                    <!-- Time axis -->
+                    <div class="tl-chart-row tl-time-row">
+                        <span class="tl-chart-ylabel"></span>
+                        <div class="tl-time-axis">
+                            <span id="tl-time-start">—</span>
+                            <span id="tl-time-end">—</span>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -782,7 +822,7 @@
     <script src="/js/utils.js?v=7"></script>
     <script src="/js/api.js?v=7"></script>
     <script src="/js/map.js?v=10"></script>
-    <script src="/js/timeline.js?v=7"></script>
+    <script src="/js/timeline.js?v=8"></script>
     <script src="/js/flights.js?v=7"></script>
     <script src="/js/auditor.js?v=7"></script>
     <script src="/js/app.js?v=8"></script>
