@@ -448,6 +448,56 @@ class TrackerService:
             return flight
 
         if not is_on_ground:
+            # Before creating a new flight, check if a recent flight was prematurely closed
+            # by reconciliation while the aircraft was still airborne. If so, reopen it instead
+            # of creating a duplicate flight record for the same physical leg.
+            ts_aware = timestamp if timestamp.tzinfo else timestamp.replace(tzinfo=timezone.utc)
+            recent_res = await session.execute(
+                select(Flight)
+                .where(
+                    Flight.aircraft_id == aircraft.id,
+                    Flight.status == "landed",
+                    Flight.actual_arrival.isnot(None),
+                )
+                .order_by(Flight.actual_arrival.desc())
+                .limit(1)
+            )
+            reopen_candidate = recent_res.scalars().first()
+
+            if reopen_candidate and reopen_candidate.actual_arrival:
+                arr = reopen_candidate.actual_arrival
+                if arr.tzinfo is None:
+                    arr = arr.replace(tzinfo=timezone.utc)
+                gap_seconds = (ts_aware - arr).total_seconds()
+
+                if 0 < gap_seconds < 900:  # closed within the last 15 min
+                    last_real_res = await session.execute(
+                        select(Position)
+                        .where(
+                            Position.flight_id == reopen_candidate.id,
+                            Position.source != 'reconciliation',
+                        )
+                        .order_by(Position.timestamp.desc())
+                        .limit(1)
+                    )
+                    last_real = last_real_res.scalars().first()
+
+                    if last_real and not last_real.on_ground:
+                        logger.info(
+                            f"Reopening prematurely-closed flight {reopen_candidate.id} for "
+                            f"{aircraft.tail_number}: closed {gap_seconds / 60:.1f} min ago "
+                            f"but last real position was airborne at {last_real.timestamp}"
+                        )
+                        reopen_candidate.status = "active"
+                        reopen_candidate.actual_arrival = None
+                        await record_flight_changes(
+                            reopen_candidate,
+                            {"status": "active", "actual_arrival": None},
+                            "tracker_reopen",
+                            session,
+                        )
+                        return reopen_candidate
+
             flight_num = callsign.strip() if callsign else aircraft.tail_number
             logger.info(f"Airborne telemetry detected for {aircraft.tail_number} with no active flight. Auto-creating active flight {flight_num}.")
 

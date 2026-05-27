@@ -124,6 +124,28 @@ class ReconciliationService:
         if flight.status not in ["active", "scheduled"]:
             return {"status": "skipped", "message": f"Flight {flight.id} is already {flight.status}"}
 
+        # Recency guard: never close a flight that had airborne positions in the last 20 minutes.
+        # This prevents premature closure during brief ADS-B coverage gaps, which would cause
+        # the tracker to split one physical flight leg into multiple flight records.
+        from app.models import Position as _Pos
+        _recent_cutoff = datetime.now(timezone.utc) - timedelta(minutes=20)
+        _recent_res = await db.execute(
+            select(_Pos)
+            .where(
+                _Pos.flight_id == flight.id,
+                _Pos.on_ground == False,
+                _Pos.source != 'reconciliation',
+                _Pos.timestamp >= _recent_cutoff,
+            )
+            .limit(1)
+        )
+        if _recent_res.scalars().first():
+            logger.info(
+                f"Skipping reconciliation for flight {flight.id} ({flight.flight_number}): "
+                f"has airborne positions within the last 20 min"
+            )
+            return {"status": "skipped", "message": "Flight has recent airborne positions; skipping to avoid premature closure"}
+
         # 2. Fetch Aircraft
         result_ac = await db.execute(
             select(Aircraft).where(Aircraft.id == flight.aircraft_id)

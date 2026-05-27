@@ -156,11 +156,11 @@ async def lifespan(app: FastAPI):
     # to avoid falsely closing a flight that was active right before the restart.
     async def run_startup_reconciliation():
         await asyncio.sleep(5)  # Let application startup fully
-        logger.info("Running startup reconciliation sweep (recency guard: 10 min)...")
+        logger.info("Running startup reconciliation sweep (recency guard: 30 min)...")
         try:
             async with async_session() as session:
                 res = await reconciliation_service.reconcile_all_active_flights(
-                    session, skip_if_recent_minutes=10
+                    session, skip_if_recent_minutes=30
                 )
                 logger.info(f"Startup reconciliation sweep completed: {res}")
         except Exception as startup_err:
