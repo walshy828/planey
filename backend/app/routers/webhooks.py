@@ -225,16 +225,23 @@ async def webhook_flight_departed(
             recent_landed.raw_data = raw
 
     for old_flight in active_flights:
-        # Check if it's a duplicate webhook (same departure, within 4 hours)
+        # A tracker-auto-created flight has departure_iata=None; treat it as matching
+        # the same departure (the webhook enriches it rather than duplicating it).
+        dep_airports_match = (
+            old_flight.departure_iata == payload.departure_iata
+            or old_flight.departure_iata is None
+        )
+        # Check if it's a duplicate webhook (same/compatible departure, within 4 hours)
         is_duplicate = False
-        if old_flight.departure_iata == payload.departure_iata:
-            if old_flight.actual_departure:
-                old_dep = old_flight.actual_departure.replace(tzinfo=None)
-                dep_time_naive = dep_time.replace(tzinfo=None)
+        if dep_airports_match:
+            ref_dep = old_flight.actual_departure or old_flight.created_at
+            if ref_dep:
+                old_dep = ref_dep.replace(tzinfo=None) if ref_dep.tzinfo else ref_dep
+                dep_time_naive = dep_time.replace(tzinfo=None) if dep_time.tzinfo else dep_time
                 if abs((old_dep - dep_time_naive).total_seconds()) < 4 * 3600:
                     is_duplicate = True
                     duplicate_flight = old_flight
-        
+
         if not is_duplicate:
             logger.info(f"Self-healing: Reconciling and closing previous active flight {old_flight.id} for {aircraft.tail_number}")
             from app.services.reconciliation import reconciliation_service
@@ -256,7 +263,41 @@ async def webhook_flight_departed(
                 await db.commit()
 
     if duplicate_flight:
-        logger.info(f"Duplicate departure webhook detected. Returning existing active flight {duplicate_flight.id}.")
+        logger.info(
+            f"Departure webhook matches existing active flight {duplicate_flight.id} for {aircraft.tail_number}. "
+            f"Enriching with webhook data."
+        )
+        # Enrich the tracker-created flight with airport/route data from the webhook
+        updates = {}
+        if payload.flight_number and not duplicate_flight.flight_number:
+            duplicate_flight.flight_number = payload.flight_number
+            updates["flight_number"] = payload.flight_number
+        if payload.callsign and not duplicate_flight.callsign:
+            duplicate_flight.callsign = payload.callsign
+            updates["callsign"] = payload.callsign
+        if payload.departure_iata and not duplicate_flight.departure_iata:
+            duplicate_flight.departure_iata = payload.departure_iata
+            updates["departure_iata"] = payload.departure_iata
+        if payload.arrival_iata and not duplicate_flight.arrival_iata:
+            duplicate_flight.arrival_iata = payload.arrival_iata
+            updates["arrival_iata"] = payload.arrival_iata
+        if payload.scheduled_arrival and not duplicate_flight.scheduled_arrival:
+            duplicate_flight.scheduled_arrival = payload.scheduled_arrival
+            updates["scheduled_arrival"] = payload.scheduled_arrival
+        if updates:
+            await record_flight_changes(duplicate_flight, updates, "webhook_departed", db)
+        # Geocode any newly-set airports
+        from app.services.geocoder import geocoder
+        if duplicate_flight.departure_iata and (not duplicate_flight.departure_lat or not duplicate_flight.departure_lon):
+            dep_coords = await geocoder.get_airport_coordinates(duplicate_flight.departure_iata)
+            if dep_coords:
+                duplicate_flight.departure_lat, duplicate_flight.departure_lon = dep_coords
+        if duplicate_flight.arrival_iata and (not duplicate_flight.arrival_lat or not duplicate_flight.arrival_lon):
+            arr_coords = await geocoder.get_airport_coordinates(duplicate_flight.arrival_iata)
+            if arr_coords:
+                duplicate_flight.arrival_lat, duplicate_flight.arrival_lon = arr_coords
+        await db.commit()
+        await db.refresh(duplicate_flight)
         return duplicate_flight
 
     # 2. Find the scheduled flight
