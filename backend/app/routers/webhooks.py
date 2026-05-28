@@ -9,13 +9,17 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, Header
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
-from app.models import Aircraft, Flight, Position, record_flight_changes
-from app.schemas import WebhookFlightFiled, WebhookFlightDeparted, WebhookFlightArrived, FlightResponse
+from app.models import Aircraft, Flight, Position, Setting, record_flight_changes
+from app.schemas import (
+    WebhookFlightFiled, WebhookFlightDeparted, WebhookFlightArrived,
+    WebhookFlightSpotted, WebhookFlightTrackingStopped, FlightResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -672,6 +676,215 @@ async def webhook_flight_arrived(
         status=status_str,
         flight_data=flight_data,
         position_data={"on_ground": True, "latitude": dest_lat, "longitude": dest_lon, "timestamp": flight.actual_arrival.isoformat()}
+    )
+
+    return flight
+
+
+@router.post("/flight-spotted", status_code=status.HTTP_200_OK)
+async def webhook_flight_spotted(
+    payload: WebhookFlightSpotted,
+    db: AsyncSession = Depends(get_db),
+    _authorized: bool = Depends(verify_token)
+):
+    """
+    Called by N8N when FlightAware spots an aircraft in flight with no filed plan.
+    Triggers an immediate position poll and activates fast polling mode.
+    """
+    ac_result = await db.execute(select(Aircraft).where(Aircraft.tail_number == payload.tail_number.upper()))
+    aircraft = ac_result.scalars().first()
+    if not aircraft:
+        raise HTTPException(status_code=404, detail=f"Aircraft {payload.tail_number} not found")
+
+    # If already actively tracked, nothing more to do
+    active_res = await db.execute(
+        select(Flight).where(Flight.aircraft_id == aircraft.id, Flight.status == "active")
+    )
+    active_flight = active_res.scalars().first()
+    if active_flight:
+        logger.info(f"flight-spotted: {payload.tail_number} already has active flight {active_flight.id}")
+        return active_flight
+
+    # Activate fast polling mode so the scheduler switches to airborne interval immediately
+    now = datetime.now(timezone.utc)
+    for key, value in [("manual_airborne_mode", "true"), ("manual_airborne_mode_set_at", now.isoformat())]:
+        res = await db.execute(select(Setting).where(Setting.key == key))
+        setting = res.scalars().first()
+        if setting:
+            setting.value = value
+        else:
+            db.add(Setting(key=key, value=value))
+    await db.commit()
+
+    logger.info(
+        f"flight-spotted: {payload.tail_number} spotted near {payload.location or 'unknown location'} "
+        f"at {payload.spotted_time or now}. Activating fast polling and triggering immediate poll."
+    )
+
+    # Fire an immediate poll to grab real GPS coordinates — let the tracker pipeline
+    # create the flight record from live telemetry
+    try:
+        from app.services.tracker import tracker_service
+        await tracker_service.update_tracker_polling_interval(db)
+        await tracker_service.poll_single_aircraft(aircraft.id)
+    except Exception as e:
+        logger.error(f"Immediate poll failed for {payload.tail_number}: {e}")
+
+    # Return the flight if the poll just created one
+    active_res = await db.execute(
+        select(Flight).where(Flight.aircraft_id == aircraft.id, Flight.status == "active")
+    )
+    active_flight = active_res.scalars().first()
+    if active_flight:
+        return active_flight
+
+    return JSONResponse(
+        status_code=status.HTTP_202_ACCEPTED,
+        content={
+            "status": "tracking_queued",
+            "tail_number": payload.tail_number,
+            "location": payload.location,
+            "message": "Fast polling activated. Position will be captured at next poll cycle.",
+        }
+    )
+
+
+@router.post("/flight-tracking-stopped", response_model=FlightResponse, status_code=status.HTTP_200_OK)
+async def webhook_flight_tracking_stopped(
+    payload: WebhookFlightTrackingStopped,
+    db: AsyncSession = Depends(get_db),
+    _authorized: bool = Depends(verify_token)
+):
+    """
+    Called by N8N when FlightAware stops tracking an aircraft.
+    Marks the active flight as landed using the last known telemetry position for coordinates.
+    """
+    ac_result = await db.execute(select(Aircraft).where(Aircraft.tail_number == payload.tail_number.upper()))
+    aircraft = ac_result.scalars().first()
+    if not aircraft:
+        raise HTTPException(status_code=404, detail=f"Aircraft {payload.tail_number} not found")
+
+    stop_time = payload.tracking_stopped_time or datetime.now(timezone.utc)
+
+    # Find the active flight
+    flight_res = await db.execute(
+        select(Flight)
+        .where(Flight.aircraft_id == aircraft.id, Flight.status == "active")
+        .order_by(Flight.actual_departure.desc().nullslast())
+        .limit(1)
+    )
+    flight = flight_res.scalars().first()
+
+    # Dedup: if already recently landed (within 4 hours), return it
+    if not flight:
+        recent_res = await db.execute(
+            select(Flight)
+            .where(Flight.aircraft_id == aircraft.id, Flight.status == "landed")
+            .order_by(Flight.actual_arrival.desc().nullslast())
+            .limit(1)
+        )
+        recent = recent_res.scalars().first()
+        if recent and recent.actual_arrival:
+            recent_arr = recent.actual_arrival.replace(tzinfo=None) if recent.actual_arrival.tzinfo else recent.actual_arrival
+            stop_naive = stop_time.replace(tzinfo=None) if stop_time.tzinfo else stop_time
+            if abs((recent_arr - stop_naive).total_seconds()) < 4 * 3600:
+                logger.info(f"flight-tracking-stopped: duplicate for {payload.tail_number}, returning existing landed flight {recent.id}")
+                return recent
+
+    # Dynamically create a landed flight if nothing active exists
+    if not flight:
+        logger.info(f"flight-tracking-stopped: no active flight for {payload.tail_number}, creating landed record dynamically")
+        flight = Flight(
+            aircraft_id=aircraft.id,
+            status="landed",
+            actual_departure=stop_time - timedelta(hours=1),
+        )
+        db.add(flight)
+        await db.flush()
+    else:
+        flight.status = "landed"
+
+    flight.actual_arrival = stop_time
+
+    # Use location strings as names if we don't already have them
+    if payload.location and not flight.arrival_name:
+        flight.arrival_name = payload.location
+    if payload.from_location and not flight.departure_name:
+        flight.departure_name = payload.from_location
+
+    # Use last known telemetry position for arrival coordinates — more accurate
+    # than forward-geocoding a city string like "Orange, MA"
+    last_pos_res = await db.execute(
+        select(Position)
+        .where(Position.flight_id == flight.id)
+        .order_by(Position.timestamp.desc())
+        .limit(1)
+    )
+    last_pos = last_pos_res.scalars().first()
+    if last_pos and (not flight.arrival_lat or not flight.arrival_lon):
+        flight.arrival_lat = last_pos.latitude
+        flight.arrival_lon = last_pos.longitude
+
+    # Record change history
+    await record_flight_changes(
+        flight,
+        {"status": "landed", "actual_arrival": str(stop_time), "arrival_name": flight.arrival_name},
+        "webhook_tracking_stopped",
+        db,
+    )
+
+    # Calculate flight summary statistics
+    try:
+        from app.services.stats_calculator import calculate_flight_stats
+        flight.summary_stats = await calculate_flight_stats(flight, db)
+    except Exception as e:
+        logger.error(f"Failed to calculate stats in tracking-stopped webhook: {e}")
+
+    await db.commit()
+    await db.refresh(flight)
+
+    logger.info(
+        f"Flight {flight.id} for {payload.tail_number} marked LANDED via tracking-stopped webhook. "
+        f"Location: {payload.location or 'unknown'}, from: {payload.from_location or 'unknown'}"
+    )
+
+    # Switch back to passive polling now that the flight is done
+    try:
+        from app.services.tracker import tracker_service
+        await tracker_service.update_tracker_polling_interval(db)
+    except Exception as e:
+        logger.error(f"Failed to update polling interval: {e}")
+
+    # Notify Home Assistant
+    from app.services.home_assistant import ha_service
+    status_str = ha_service.build_status_string(
+        on_ground=True,
+        departure_iata=flight.departure_iata,
+        arrival_iata=flight.arrival_iata,
+        departure_name=flight.departure_name,
+        arrival_name=flight.arrival_name,
+        scheduled_arrival=flight.scheduled_arrival.isoformat() if flight.scheduled_arrival else None,
+        scheduled_departure=flight.scheduled_departure.isoformat() if flight.scheduled_departure else None,
+        flight_status=flight.status,
+    )
+    flight_data = {
+        "flight_number": flight.flight_number,
+        "callsign": flight.callsign,
+        "departure_iata": flight.departure_iata,
+        "departure_name": flight.departure_name,
+        "arrival_iata": flight.arrival_iata,
+        "arrival_name": flight.arrival_name,
+        "scheduled_departure": flight.scheduled_departure.isoformat() if flight.scheduled_departure else None,
+        "scheduled_arrival": flight.scheduled_arrival.isoformat() if flight.scheduled_arrival else None,
+        "actual_departure": flight.actual_departure.isoformat() if flight.actual_departure else None,
+        "actual_arrival": flight.actual_arrival.isoformat() if flight.actual_arrival else None,
+        "status": flight.status,
+    }
+    await ha_service.update_aircraft_sensor(
+        tail_number=aircraft.tail_number,
+        status=status_str,
+        flight_data=flight_data,
+        position_data={"on_ground": True, "latitude": flight.arrival_lat, "longitude": flight.arrival_lon},
     )
 
     return flight

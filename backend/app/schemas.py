@@ -291,3 +291,18 @@ class WebhookFlightArrived(BaseModel):
     actual_arrival: Optional[datetime] = Field(None, description="Actual Arrival Time (ISO 8601)")
 
 
+class WebhookFlightSpotted(BaseModel):
+    """Payload from N8N when FlightAware spots an aircraft in flight with no filed plan."""
+    tail_number: str = Field(..., description="Aircraft registration (e.g., N12345)")
+    spotted_time: Optional[datetime] = Field(None, description="Time aircraft was spotted (ISO 8601)")
+    location: Optional[str] = Field(None, description="Approximate location string (e.g., 'Worcester, MA')")
+
+
+class WebhookFlightTrackingStopped(BaseModel):
+    """Payload from N8N when FlightAware stops tracking an aircraft."""
+    tail_number: str = Field(..., description="Aircraft registration (e.g., N12345)")
+    tracking_stopped_time: Optional[datetime] = Field(None, description="Time tracking stopped (ISO 8601)")
+    location: Optional[str] = Field(None, description="Location where tracking stopped (e.g., 'Orange, MA')")
+    from_location: Optional[str] = Field(None, description="Origin location (e.g., 'Worcester, MA')")
+
+
