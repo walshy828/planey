@@ -87,6 +87,8 @@ async def init_db():
                 
                 # Enforce the non-nullable FK constraint on flight_id
                 await conn.execute(text("ALTER TABLE positions ALTER COLUMN flight_id SET NOT NULL;"))
+                # Self-healing: add ground_elevation_ft for AGL calculation
+                await conn.execute(text("ALTER TABLE positions ADD COLUMN IF NOT EXISTS ground_elevation_ft FLOAT;"))
             logger.info("Database initialized successfully")
             return
         except Exception as e:

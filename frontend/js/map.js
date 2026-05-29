@@ -483,7 +483,7 @@ const FlightMap = {
                     </div>
                 ` : ''}
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:12px">
-                    <div><span style="color:#556677">Alt:</span> ${Utils.formatAlt(data.altitude_ft)}</div>
+                    <div><span style="color:#556677">Alt:</span> ${Utils.formatAlt(data.altitude_ft)}${data.ground_elevation_ft != null && data.altitude_ft != null ? `<span style="color:#556677;font-size:10px"> (${Math.round(data.altitude_ft - data.ground_elevation_ft).toLocaleString()} AGL)</span>` : ''}</div>
                     <div><span style="color:#556677">Spd:</span> ${Utils.formatSpeed(data.ground_speed_kts)}</div>
                     <div><span style="color:#556677">Hdg:</span> ${Utils.formatHeading(data.heading)}</div>
                     <div><span style="color:#556677">VS:</span> ${Utils.formatVRate(data.vertical_rate_fpm)}</div>
@@ -501,9 +501,16 @@ const FlightMap = {
         const altColor = Utils.altitudeColor(pos.altitude_ft);
         const compass = Utils.compassDirection(pos.heading);
 
+        const aglFt = (pos.altitude_ft != null && pos.ground_elevation_ft != null)
+            ? pos.altitude_ft - pos.ground_elevation_ft
+            : null;
+        const aglLine = aglFt != null
+            ? `<div class="tt-sub" style="color:#8899aa">${Math.round(aglFt).toLocaleString()} ft AGL</div>`
+            : '';
+
         const altHtml = fl
-            ? `<div class="tt-value" style="color:${altColor}">${fl}</div><div class="tt-sub">${Utils.formatAlt(pos.altitude_ft)}</div>`
-            : `<div class="tt-value" style="color:${altColor}">${Utils.formatAlt(pos.altitude_ft)}</div>`;
+            ? `<div class="tt-value" style="color:${altColor}">${fl}</div><div class="tt-sub">${Utils.formatAlt(pos.altitude_ft)}</div>${aglLine}`
+            : `<div class="tt-value" style="color:${altColor}">${Utils.formatAlt(pos.altitude_ft)}</div>${aglLine}`;
 
         const vr = pos.vertical_rate_fpm;
         const vrDisplay = vr != null ? (vr > 0 ? `+${Math.round(vr).toLocaleString()}` : Math.round(vr).toLocaleString()) : '—';

@@ -22,6 +22,7 @@ from app.models import Aircraft, Flight, Position, record_flight_changes
 from app.services.opensky import opensky_client
 from app.services.flightradar import fr24_client
 from app.services.flightaware import fa_client
+from app.services.elevation import get_elevation_ft, get_elevations_ft
 from app.services.geocoder import geocoder
 from app.services.home_assistant import ha_service
 from app.services.websocket import ws_manager
@@ -421,6 +422,7 @@ class TrackerService:
             latitude=sv.latitude,
             longitude=sv.longitude,
             altitude_ft=sv.baro_altitude_m * 3.28084 if sv.baro_altitude_m is not None else None,
+            ground_elevation_ft=await get_elevation_ft(sv.latitude, sv.longitude),
             ground_speed_kts=sv.velocity_mps * 1.94384 if sv.velocity_mps is not None else None,
             heading=sv.true_track,
             vertical_rate_fpm=sv.vertical_rate_mps * 196.85 if sv.vertical_rate_mps is not None else None,
@@ -440,6 +442,7 @@ class TrackerService:
                 "latitude": new_pos.latitude,
                 "longitude": new_pos.longitude,
                 "altitude_ft": new_pos.altitude_ft,
+                "ground_elevation_ft": new_pos.ground_elevation_ft,
                 "ground_speed_kts": new_pos.ground_speed_kts,
                 "heading": new_pos.heading,
                 "vertical_rate_fpm": new_pos.vertical_rate_fpm,
@@ -539,8 +542,12 @@ class TrackerService:
                     await self._broadcast_tracker_status()
                     return
 
+                # Batch-fetch ground elevations for all state vectors (cache makes this cheap after warmup)
+                sv_coords = [(sv.latitude, sv.longitude) for sv in state_vectors]
+                sv_elevations = await get_elevations_ft(sv_coords)
+
                 # Process each state vector
-                for sv in state_vectors:
+                for sv, ground_elev in zip(state_vectors, sv_elevations):
                     aircraft = icao_map.get(sv.icao24.lower())
                     if not aircraft:
                         continue
@@ -572,6 +579,7 @@ class TrackerService:
                         latitude=sv.latitude,
                         longitude=sv.longitude,
                         altitude_ft=sv.altitude_ft,
+                        ground_elevation_ft=ground_elev,
                         ground_speed_kts=sv.ground_speed_kts,
                         heading=sv.heading,
                         vertical_rate_fpm=sv.vertical_rate_fpm,
@@ -934,6 +942,7 @@ class TrackerService:
                 "latitude": position.latitude,
                 "longitude": position.longitude,
                 "altitude_ft": position.altitude_ft,
+                "ground_elevation_ft": position.ground_elevation_ft,
                 "ground_speed_kts": position.ground_speed_kts,
                 "heading": position.heading,
                 "vertical_rate_fpm": position.vertical_rate_fpm,

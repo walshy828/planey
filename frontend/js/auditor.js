@@ -415,11 +415,17 @@ const TelemetryAuditor = {
                 ? `<span class="source-badge source-${p.source.toLowerCase()}">${p.source}</span>` 
                 : `<span class="source-badge">N/A</span>`;
 
+            const aglFt = p.agl_ft != null ? Math.round(p.agl_ft).toLocaleString() : (p.ground_elevation_ft == null ? '—' : '0');
+            const aglTitle = p.ground_elevation_ft != null
+                ? `Terrain: ${Math.round(p.ground_elevation_ft).toLocaleString()} ft MSL`
+                : 'Terrain elevation not available';
+
             tr.innerHTML = `
                 <td>${timeStr}</td>
                 ${getTd(p.latitude.toFixed(5), 'latitude')}
                 ${getTd(p.longitude.toFixed(5), 'longitude')}
                 ${getTd(p.altitude_ft ? p.altitude_ft.toLocaleString() : 0, 'altitude_ft')}
+                <td title="${aglTitle}" style="color:${p.ground_elevation_ft == null ? 'var(--text-muted)' : ''}">${aglFt}</td>
                 ${getTd(p.ground_speed_kts ? Math.round(p.ground_speed_kts) : 0, 'ground_speed_kts')}
                 <td>${p.heading !== null ? Math.round(p.heading) : 'N/A'}</td>
                 ${getTd(p.vertical_rate_fpm ? p.vertical_rate_fpm.toLocaleString() : 0, 'vertical_rate_fpm')}

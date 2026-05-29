@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 
 # =============================================================================
@@ -173,6 +173,7 @@ class PositionResponse(BaseModel):
     latitude: float
     longitude: float
     altitude_ft: Optional[float] = None
+    ground_elevation_ft: Optional[float] = None
     ground_speed_kts: Optional[float] = None
     heading: Optional[float] = None
     vertical_rate_fpm: Optional[float] = None
@@ -181,6 +182,13 @@ class PositionResponse(BaseModel):
     source: str
     location_name: Optional[str] = None
     timestamp: datetime
+
+    @computed_field
+    @property
+    def agl_ft(self) -> Optional[float]:
+        if self.altitude_ft is not None and self.ground_elevation_ft is not None:
+            return round(self.altitude_ft - self.ground_elevation_ft, 1)
+        return None
 
     class Config:
         from_attributes = True

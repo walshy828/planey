@@ -226,6 +226,7 @@ class Position(Base):
     latitude: Mapped[float] = mapped_column(Float, nullable=False)
     longitude: Mapped[float] = mapped_column(Float, nullable=False)
     altitude_ft: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ground_elevation_ft: Mapped[float | None] = mapped_column(Float, nullable=True)
     ground_speed_kts: Mapped[float | None] = mapped_column(Float, nullable=True)
     heading: Mapped[float | None] = mapped_column(Float, nullable=True)
     vertical_rate_fpm: Mapped[float | None] = mapped_column(Float, nullable=True)
