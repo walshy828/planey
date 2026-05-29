@@ -15,7 +15,7 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
     <!-- App CSS -->
-    <link rel="stylesheet" href="css/styles.css?v=11">
+    <link rel="stylesheet" href="css/styles.css?v=12">
 
     <!-- Favicon -->
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✈️</text></svg>">
@@ -613,203 +613,283 @@
         <div class="modal modal-auditor">
             <div class="modal-header">
                 <div style="display: flex; align-items: center; gap: 10px;">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--accent);">
-                        <circle cx="12" cy="12" r="10"></circle>
-                        <line x1="22" y1="12" x2="18" y2="12"></line>
-                        <line x1="6" y1="12" x2="2" y2="12"></line>
-                        <line x1="12" y1="6" x2="12" y2="2"></line>
-                        <line x1="12" y1="22" x2="12" y2="18"></line>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--accent); flex-shrink: 0;">
+                        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
                     </svg>
-                    <h2 style="margin: 0; font-size: 18px; font-weight: 700; letter-spacing: -0.02em;">Telemetry Auditor</h2>
+                    <h2 style="margin: 0; font-size: 17px; font-weight: 700; letter-spacing: -0.02em;">Data Auditor</h2>
                 </div>
                 <button class="btn-icon" id="btn-close-auditor">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="18" y1="6" x2="6" y2="18"></line>
-                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                     </svg>
                 </button>
             </div>
             <div class="modal-body">
-                <!-- Auditor Split Container -->
                 <div class="auditor-container">
-                    <!-- Left Sidebar (Flight List Selector) -->
+
+                    <!-- ── Left Panel: Flight List ── -->
                     <div class="auditor-sidebar">
                         <div class="auditor-sidebar-header">
-                            <input type="text" id="auditor-flight-search" class="input-field" placeholder="Search by flight/callsign..." style="font-size: 12px; padding: 6px 10px;">
-                            <select id="auditor-flight-status-filter" class="input-field" style="font-size: 12px; padding: 6px 10px; height: auto;">
-                                <option value="all">All Statuses</option>
-                                <option value="active">Active</option>
-                                <option value="scheduled">Scheduled</option>
-                                <option value="completed">Completed</option>
-                            </select>
+                            <div class="auditor-search-wrap">
+                                <svg class="auditor-search-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                                </svg>
+                                <input type="text" id="auditor-flight-search" class="auditor-search-input" placeholder="Search flights, airports, tail…">
+                            </div>
+                            <div class="auditor-status-chips" id="auditor-status-chips">
+                                <button class="auditor-status-chip active" data-status="all">All</button>
+                                <button class="auditor-status-chip" data-status="active">Active</button>
+                                <button class="auditor-status-chip" data-status="scheduled">Sched</button>
+                                <button class="auditor-status-chip" data-status="completed">Done</button>
+                            </div>
+                            <div class="auditor-filter-row">
+                                <select id="auditor-aircraft-filter" class="auditor-select">
+                                    <option value="">All Aircraft</option>
+                                </select>
+                                <select id="auditor-date-filter" class="auditor-select">
+                                    <option value="all">All Time</option>
+                                    <option value="7">Last 7 Days</option>
+                                    <option value="30">Last 30 Days</option>
+                                    <option value="90">Last 90 Days</option>
+                                </select>
+                            </div>
                         </div>
-                        <div class="auditor-flight-list" id="auditor-flights-list">
-                            <!-- Populated dynamically via JS -->
+                        <div class="auditor-list-meta">
+                            <span id="auditor-flight-count">Loading…</span>
                         </div>
+                        <div class="auditor-flight-list" id="auditor-flights-list"></div>
                     </div>
 
-                    <!-- Right Workspace -->
+                    <!-- ── Right Panel: Workspace ── -->
                     <div class="auditor-main">
-                        <!-- Empty State when no flight selected -->
+                        <!-- Empty state -->
                         <div class="auditor-main-empty" id="auditor-main-empty">
-                            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3">
-                                <circle cx="12" cy="12" r="10"></circle>
-                                <line x1="22" y1="12" x2="18" y2="12"></line>
-                                <line x1="6" y1="12" x2="2" y2="12"></line>
-                                <line x1="12" y1="6" x2="12" y2="2"></line>
-                                <line x1="12" y1="22" x2="12" y2="18"></line>
+                            <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.2">
+                                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
                             </svg>
-                            <p style="font-size: 14px; font-weight: 500;">Select a flight from the list to begin auditing telemetry</p>
+                            <p style="font-size: 14px; font-weight: 600;">Select a flight to begin auditing</p>
+                            <p style="font-size: 12px; color: var(--text-muted);">Edit metadata, merge duplicates, clean telemetry</p>
                         </div>
 
-                        <!-- Workspace Active Pane -->
-                        <div id="auditor-workspace" style="display: none; height: 100%; flex-direction: column; overflow: hidden; flex: 1;">
-                            <!-- Top Pane: Flight Metadata Form -->
-                            <div class="auditor-flight-details-pane">
-                                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
-                                    <h3 style="font-size: 14px; font-weight: 600; margin: 0; color: var(--text-primary);">Flight Details & Metadata</h3>
-                                    <button type="button" class="btn-ghost btn-back-to-list" style="padding: 4px 8px; font-size: 11px;" onclick="TelemetryAuditor.resetWorkspace()">
-                                        ← Back to Flights
-                                    </button>
+                        <!-- Active workspace -->
+                        <div id="auditor-workspace" style="display: none; flex-direction: column; height: 100%; overflow: hidden;">
+
+                            <!-- Workspace header -->
+                            <div class="auditor-ws-header">
+                                <button class="btn-back-to-list" id="btn-back-to-list">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+                                    Back
+                                </button>
+                                <div class="ws-flight-info">
+                                    <span class="ws-flight-label" id="ws-flight-label"></span>
+                                    <span class="ws-route-label" id="ws-route-label"></span>
                                 </div>
-                                <form id="auditor-flight-form" style="display: flex; flex-direction: column; gap: 12px;">
-                                    <div class="form-row">
-                                        <div class="form-group">
-                                            <label style="font-size: 11px;">Aircraft</label>
-                                            <select id="audit-aircraft" class="input-field" style="height: auto; padding: 8px;">
-                                                <!-- Populated dynamically via JS -->
-                                            </select>
-                                        </div>
-                                        <div class="form-group">
-                                            <label style="font-size: 11px;">Flight Number</label>
-                                            <input type="text" id="audit-flight-number" class="input-field">
-                                        </div>
-                                        <div class="form-group">
-                                            <label style="font-size: 11px;">Callsign</label>
-                                            <input type="text" id="audit-callsign" class="input-field">
-                                        </div>
-                                        <div class="form-group">
-                                            <label style="font-size: 11px;">Status</label>
-                                            <select id="audit-status" class="input-field" style="height: auto; padding: 8px;">
-                                                <option value="scheduled">Scheduled</option>
-                                                <option value="active">Active</option>
-                                                <option value="completed">Completed</option>
-                                            </select>
-                                        </div>
-                                    </div>
-                                    <div class="form-row">
-                                        <div class="form-group">
-                                            <label style="font-size: 11px;">Departure (IATA/ICAO)</label>
-                                            <div style="display: flex; gap: 4px;">
-                                                <input type="text" id="audit-dep-iata" class="input-field" placeholder="IATA" style="flex: 1;">
-                                                <input type="text" id="audit-dep-icao" class="input-field" placeholder="ICAO" style="flex: 1;">
-                                            </div>
-                                        </div>
-                                        <div class="form-group">
-                                            <label style="font-size: 11px;">Arrival (IATA/ICAO)</label>
-                                            <div style="display: flex; gap: 4px;">
-                                                <input type="text" id="audit-arr-iata" class="input-field" placeholder="IATA" style="flex: 1;">
-                                                <input type="text" id="audit-arr-icao" class="input-field" placeholder="ICAO" style="flex: 1;">
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="form-row">
-                                        <div class="form-group">
-                                            <label style="font-size: 11px;">Departure Name</label>
-                                            <input type="text" id="audit-dep-name" class="input-field">
-                                        </div>
-                                        <div class="form-group">
-                                            <label style="font-size: 11px;">Arrival Name</label>
-                                            <input type="text" id="audit-arr-name" class="input-field">
-                                        </div>
-                                    </div>
-                                    <div class="form-row">
-                                        <div class="form-group">
-                                            <label style="font-size: 11px;">Departure Lat/Lon</label>
-                                            <div style="display: flex; gap: 4px;">
-                                                <input type="number" id="audit-dep-lat" step="any" class="input-field" placeholder="Lat" style="flex: 1;">
-                                                <input type="number" id="audit-dep-lon" step="any" class="input-field" placeholder="Lon" style="flex: 1;">
-                                            </div>
-                                        </div>
-                                        <div class="form-group">
-                                            <label style="font-size: 11px;">Arrival Lat/Lon</label>
-                                            <div style="display: flex; gap: 4px;">
-                                                <input type="number" id="audit-arr-lat" step="any" class="input-field" placeholder="Lat" style="flex: 1;">
-                                                <input type="number" id="audit-arr-lon" step="any" class="input-field" placeholder="Lon" style="flex: 1;">
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="form-row">
-                                        <div class="form-group">
-                                            <label style="font-size: 11px;">Scheduled Departure (<span id="audit-tz-label-1"></span>)</label>
-                                            <input type="datetime-local" id="audit-sched-dep" class="input-field">
-                                        </div>
-                                        <div class="form-group">
-                                            <label style="font-size: 11px;">Scheduled Arrival (<span id="audit-tz-label-2"></span>)</label>
-                                            <input type="datetime-local" id="audit-sched-arr" class="input-field">
-                                        </div>
-                                    </div>
-                                    <div class="form-row">
-                                        <div class="form-group">
-                                            <label style="font-size: 11px;">Actual Departure (<span id="audit-tz-label-3"></span>)</label>
-                                            <input type="datetime-local" id="audit-act-dep" class="input-field">
-                                        </div>
-                                        <div class="form-group">
-                                            <label style="font-size: 11px;">Actual Arrival (<span id="audit-tz-label-4"></span>)</label>
-                                            <input type="datetime-local" id="audit-act-arr" class="input-field">
-                                        </div>
-                                    </div>
-                                    <div class="form-group">
-                                        <label style="font-size: 11px;">Expected Route</label>
-                                        <textarea id="audit-route" class="input-field" style="height: 48px; font-family: monospace; font-size: 11px; resize: none;"></textarea>
-                                    </div>
-                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px;">
-                                        <div id="flight-audit-stats-summary" style="font-size: 11px; color: var(--text-secondary);">
-                                            <!-- Stats summarized here -->
-                                        </div>
-                                        <div style="display: flex; gap: 8px;">
-                                            <button type="button" class="btn-ghost" id="btn-merge-flight-audit" style="padding: 6px 12px; font-size: 12px; color: var(--accent);">Merge into…</button>
-                                            <button type="button" class="btn-primary" id="btn-save-flight-audit" style="padding: 6px 16px; font-size: 12px;">Save Details</button>
-                                        </div>
-                                    </div>
-                                </form>
+                                <div class="ws-stats-bar" id="ws-stats-bar"></div>
+                                <div class="ws-actions">
+                                    <button type="button" class="btn-ghost ws-btn-merge" id="btn-merge-flight-audit">
+                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+                                        Merge
+                                    </button>
+                                    <button type="button" class="btn-ghost btn-ws-danger" id="btn-delete-flight-audit">
+                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                                        Delete
+                                    </button>
+                                    <button type="button" class="btn-primary ws-btn-save" id="btn-save-flight-audit">Save Details</button>
+                                </div>
                             </div>
 
-                            <!-- Bottom Pane: Telemetry Table -->
-                            <div class="auditor-telemetry-pane">
-                                <div class="auditor-telemetry-header">
-                                    <h3 style="font-size: 14px; font-weight: 600; margin: 0; color: var(--text-primary);">Telemetry Position Reports</h3>
-                                    <span id="telemetry-count-badge" style="font-size: 11px; padding: 2px 8px; background: var(--bg-elevated); border-radius: 12px; color: var(--text-secondary);">0 reports</span>
+                            <!-- Tab bar -->
+                            <div class="auditor-tabs">
+                                <button class="auditor-tab active" data-tab="details">Details</button>
+                                <button class="auditor-tab" data-tab="positions">
+                                    Positions <span class="tab-badge" id="auditor-pos-count-badge">0</span>
+                                </button>
+                            </div>
+
+                            <!-- ── Details Tab ── -->
+                            <div class="auditor-tab-content active" id="auditor-tab-details">
+                                <div class="audit-details-scroll">
+                                    <form id="auditor-flight-form">
+
+                                        <!-- Flight Identity -->
+                                        <div class="audit-section">
+                                            <div class="audit-section-title">Flight Identity</div>
+                                            <div class="form-row">
+                                                <div class="form-group">
+                                                    <label class="audit-label">Aircraft</label>
+                                                    <select id="audit-aircraft" class="input-field" style="height: auto; padding: 7px 10px;"></select>
+                                                </div>
+                                                <div class="form-group">
+                                                    <label class="audit-label">Flight Number</label>
+                                                    <input type="text" id="audit-flight-number" class="input-field">
+                                                </div>
+                                                <div class="form-group">
+                                                    <label class="audit-label">Callsign</label>
+                                                    <input type="text" id="audit-callsign" class="input-field">
+                                                </div>
+                                                <div class="form-group">
+                                                    <label class="audit-label">Status</label>
+                                                    <select id="audit-status" class="input-field" style="height: auto; padding: 7px 10px;">
+                                                        <option value="scheduled">Scheduled</option>
+                                                        <option value="active">Active</option>
+                                                        <option value="completed">Completed</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <!-- Departure Airport -->
+                                        <div class="audit-section">
+                                            <div class="audit-section-title">Departure Airport</div>
+                                            <div class="form-row">
+                                                <div class="form-group audit-code-field">
+                                                    <label class="audit-label">IATA</label>
+                                                    <input type="text" id="audit-dep-iata" class="input-field" placeholder="SBN" maxlength="4">
+                                                </div>
+                                                <div class="form-group audit-code-field">
+                                                    <label class="audit-label">ICAO</label>
+                                                    <input type="text" id="audit-dep-icao" class="input-field" placeholder="KSBN" maxlength="5">
+                                                </div>
+                                                <div class="form-group" style="flex: 2;">
+                                                    <label class="audit-label">Airport Name</label>
+                                                    <input type="text" id="audit-dep-name" class="input-field">
+                                                </div>
+                                                <div class="form-group audit-coord-field">
+                                                    <label class="audit-label">Latitude</label>
+                                                    <input type="number" id="audit-dep-lat" class="input-field" step="any">
+                                                </div>
+                                                <div class="form-group audit-coord-field">
+                                                    <label class="audit-label">Longitude</label>
+                                                    <input type="number" id="audit-dep-lon" class="input-field" step="any">
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <!-- Arrival Airport -->
+                                        <div class="audit-section">
+                                            <div class="audit-section-title">Arrival Airport</div>
+                                            <div class="form-row">
+                                                <div class="form-group audit-code-field">
+                                                    <label class="audit-label">IATA</label>
+                                                    <input type="text" id="audit-arr-iata" class="input-field" placeholder="ORD" maxlength="4">
+                                                </div>
+                                                <div class="form-group audit-code-field">
+                                                    <label class="audit-label">ICAO</label>
+                                                    <input type="text" id="audit-arr-icao" class="input-field" placeholder="KORD" maxlength="5">
+                                                </div>
+                                                <div class="form-group" style="flex: 2;">
+                                                    <label class="audit-label">Airport Name</label>
+                                                    <input type="text" id="audit-arr-name" class="input-field">
+                                                </div>
+                                                <div class="form-group audit-coord-field">
+                                                    <label class="audit-label">Latitude</label>
+                                                    <input type="number" id="audit-arr-lat" class="input-field" step="any">
+                                                </div>
+                                                <div class="form-group audit-coord-field">
+                                                    <label class="audit-label">Longitude</label>
+                                                    <input type="number" id="audit-arr-lon" class="input-field" step="any">
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <!-- Schedule & Times -->
+                                        <div class="audit-section">
+                                            <div class="audit-section-title">Schedule &amp; Times <span class="audit-tz-note">(<span id="audit-tz-label-1"></span>)</span></div>
+                                            <div class="form-row">
+                                                <div class="form-group">
+                                                    <label class="audit-label">Scheduled Departure</label>
+                                                    <input type="datetime-local" id="audit-sched-dep" class="input-field">
+                                                </div>
+                                                <div class="form-group">
+                                                    <label class="audit-label">Scheduled Arrival</label>
+                                                    <input type="datetime-local" id="audit-sched-arr" class="input-field">
+                                                </div>
+                                                <div class="form-group">
+                                                    <label class="audit-label">Actual Departure</label>
+                                                    <input type="datetime-local" id="audit-act-dep" class="input-field">
+                                                </div>
+                                                <div class="form-group">
+                                                    <label class="audit-label">Actual Arrival</label>
+                                                    <input type="datetime-local" id="audit-act-arr" class="input-field">
+                                                </div>
+                                            </div>
+                                            <span id="audit-tz-label-2" style="display:none;"></span>
+                                            <span id="audit-tz-label-3" style="display:none;"></span>
+                                            <span id="audit-tz-label-4" style="display:none;"></span>
+                                        </div>
+
+                                        <!-- Expected Route -->
+                                        <div class="audit-section">
+                                            <div class="audit-section-title">Expected Route</div>
+                                            <textarea id="audit-route" class="input-field" style="height: 60px; font-family: var(--mono); font-size: 11px; resize: vertical; width: 100%;"></textarea>
+                                        </div>
+
+                                        <!-- Flight Statistics -->
+                                        <div class="audit-section">
+                                            <div class="audit-section-title">Flight Statistics</div>
+                                            <div id="flight-audit-stats-summary" class="audit-stats-content"></div>
+                                        </div>
+
+                                    </form>
+                                </div>
+                            </div>
+
+                            <!-- ── Positions Tab ── -->
+                            <div class="auditor-tab-content" id="auditor-tab-positions">
+                                <div class="positions-toolbar">
+                                    <div class="positions-tb-left">
+                                        <label class="positions-select-all-label">
+                                            <input type="checkbox" id="select-all-positions">
+                                            <span>Select All</span>
+                                        </label>
+                                        <button id="btn-delete-selected" class="btn-ghost btn-pos-delete" disabled>
+                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                                            Delete (<span id="selected-count">0</span>)
+                                        </button>
+                                    </div>
+                                    <div class="positions-tb-right">
+                                        <button id="btn-filter-anomalies" class="auditor-status-chip" style="font-size: 10px; flex: unset; padding: 5px 9px;">
+                                            ⚠ Anomalies Only
+                                        </button>
+                                        <select id="positions-source-filter" class="auditor-select" style="flex: unset; min-width: 110px;">
+                                            <option value="">All Sources</option>
+                                            <option value="opensky">OpenSky</option>
+                                            <option value="webhook">Webhook</option>
+                                            <option value="reconciliation">Reconciliation</option>
+                                            <option value="manual">Manual</option>
+                                        </select>
+                                    </div>
                                 </div>
                                 <div class="auditor-table-container">
                                     <table class="auditor-table">
                                         <thead>
                                             <tr>
-                                                <th class="sortable" data-field="timestamp" style="cursor: pointer; user-select: none;">Timestamp (<span id="auditor-tz-col-label"></span>) <span class="sort-icon"></span></th>
-                                                <th class="sortable" data-field="latitude" style="cursor: pointer; user-select: none;">Latitude <span class="sort-icon"></span></th>
-                                                <th class="sortable" data-field="longitude" style="cursor: pointer; user-select: none;">Longitude <span class="sort-icon"></span></th>
-                                                <th class="sortable" data-field="altitude_ft" style="cursor: pointer; user-select: none;">Altitude (ft MSL) <span class="sort-icon"></span></th>
-                                                <th class="sortable" data-field="agl_ft" style="cursor: pointer; user-select: none;">AGL (ft) <span class="sort-icon"></span></th>
-                                                <th class="sortable" data-field="ground_speed_kts" style="cursor: pointer; user-select: none;">Speed (kts) <span class="sort-icon"></span></th>
-                                                <th class="sortable" data-field="heading" style="cursor: pointer; user-select: none;">Heading (°) <span class="sort-icon"></span></th>
-                                                <th class="sortable" data-field="vertical_rate_fpm" style="cursor: pointer; user-select: none;">V-Rate (fpm) <span class="sort-icon"></span></th>
-                                                <th class="sortable" data-field="source" style="cursor: pointer; user-select: none;">Source <span class="sort-icon"></span></th>
-                                                <th class="sortable" data-field="status" style="cursor: pointer; user-select: none;">Status/Issues <span class="sort-icon"></span></th>
-                                                <th style="width: 140px; text-align: right;">Actions</th>
+                                                <th style="width: 34px; padding: 8px 10px;"></th>
+                                                <th class="sortable" data-field="timestamp">Time (<span id="auditor-tz-col-label"></span>) <span class="sort-icon"></span></th>
+                                                <th class="sortable" data-field="latitude">Lat <span class="sort-icon"></span></th>
+                                                <th class="sortable" data-field="longitude">Lon <span class="sort-icon"></span></th>
+                                                <th class="sortable" data-field="altitude_ft">Alt (ft) <span class="sort-icon"></span></th>
+                                                <th class="sortable" data-field="agl_ft">AGL <span class="sort-icon"></span></th>
+                                                <th class="sortable" data-field="ground_speed_kts">Spd (kts) <span class="sort-icon"></span></th>
+                                                <th class="sortable" data-field="heading">Hdg <span class="sort-icon"></span></th>
+                                                <th class="sortable" data-field="vertical_rate_fpm">V-Rate <span class="sort-icon"></span></th>
+                                                <th class="sortable" data-field="source">Source <span class="sort-icon"></span></th>
+                                                <th class="sortable" data-field="status">Status <span class="sort-icon"></span></th>
+                                                <th style="width: 130px; text-align: right;">Actions</th>
                                             </tr>
                                         </thead>
-                                        <tbody id="auditor-telemetry-tbody">
-                                            <!-- Populated dynamically via JS -->
-                                        </tbody>
+                                        <tbody id="auditor-telemetry-tbody"></tbody>
                                     </table>
                                 </div>
                             </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
+
+                        </div><!-- /auditor-workspace -->
+                    </div><!-- /auditor-main -->
+
+                </div><!-- /auditor-container -->
+            </div><!-- /modal-body -->
+        </div><!-- /modal -->
+    </div><!-- /modal-overlay -->
 
     <!-- ================================================================== -->
     <!-- Toast Notifications                                                 -->
@@ -825,7 +905,7 @@
     <script src="/js/map.js?v=10"></script>
     <script src="/js/timeline.js?v=8"></script>
     <script src="/js/flights.js?v=7"></script>
-    <script src="/js/auditor.js?v=7"></script>
+    <script src="/js/auditor.js?v=8"></script>
     <script src="/js/app.js?v=8"></script>
 </body>
 </html>

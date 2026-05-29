@@ -1,6 +1,6 @@
 /**
- * Planey - Telemetry Auditor Workspace
- * UI control, data hygiene, and anomaly detection for flight telemetry.
+ * Planey - Data Auditor
+ * Flight data cleansing: search, filter, merge, edit, delete.
  */
 
 const TelemetryAuditor = {
@@ -8,20 +8,25 @@ const TelemetryAuditor = {
     flights: [],
     currentFlight: null,
     currentPositions: [],
-    flightCategory: 'plane', // plane or helicopter
+    flightCategory: 'plane',
     sortField: 'timestamp',
     sortOrder: 'desc',
+    activeTab: 'details',
+    selectedPositionIds: new Set(),
+    anomalyFilter: false,
+    sourceFilter: '',
+    statusFilter: 'all',
+    aircraftFilter: '',
+    dateFilter: 'all',
 
     async open(defaultFlightId = null) {
         document.getElementById('modal-telemetry-auditor').style.display = 'flex';
         this.initListeners();
         await Promise.all([
             this.loadAircraftList(),
-            this.loadFlights()
+            this.loadFlights(),
         ]);
-        if (defaultFlightId) {
-            this.selectFlight(defaultFlightId);
-        }
+        if (defaultFlightId) this.selectFlight(defaultFlightId);
     },
 
     close() {
@@ -29,9 +34,8 @@ const TelemetryAuditor = {
         this.selectedFlightId = null;
         this.currentFlight = null;
         this.currentPositions = [];
+        this.selectedPositionIds.clear();
         this.resetWorkspace();
-        
-        // Refresh main page UI when we close the auditor, in case we modified anything
         if (window.Flights) {
             window.Flights.loadAircraft();
             window.Flights.loadFlights();
@@ -42,171 +46,332 @@ const TelemetryAuditor = {
         document.getElementById('auditor-workspace').style.display = 'none';
         document.getElementById('auditor-main-empty').style.display = 'flex';
         const container = document.querySelector('.auditor-container');
-        if (container) {
-            container.classList.remove('flight-selected');
-        }
+        if (container) container.classList.remove('flight-selected');
+        this.selectedFlightId = null;
+        this.filterAndRenderFlights();
     },
 
     initListeners() {
-        // Search and filter listeners
+        // Search
         const searchInput = document.getElementById('auditor-flight-search');
-        const filterSelect = document.getElementById('auditor-flight-status-filter');
-        
-        // Remove existing listeners by replacing elements or just standard setup
-        searchInput.oninput = () => this.filterAndRenderFlights();
-        filterSelect.onchange = () => this.filterAndRenderFlights();
+        searchInput.oninput = () => {
+            this.searchQuery = searchInput.value;
+            this.filterAndRenderFlights();
+        };
+        this.searchQuery = searchInput.value || '';
 
-        // Flight details Save button
-        const saveFlightBtn = document.getElementById('btn-save-flight-audit');
-        saveFlightBtn.onclick = (e) => {
+        // Status filter chips
+        document.querySelectorAll('.auditor-status-chip[data-status]').forEach(btn => {
+            btn.onclick = (e) => {
+                document.querySelectorAll('.auditor-status-chip[data-status]').forEach(b => b.classList.remove('active'));
+                e.currentTarget.classList.add('active');
+                this.statusFilter = e.currentTarget.dataset.status;
+                this.filterAndRenderFlights();
+            };
+        });
+
+        // Aircraft filter
+        document.getElementById('auditor-aircraft-filter').onchange = (e) => {
+            this.aircraftFilter = e.target.value;
+            this.filterAndRenderFlights();
+        };
+
+        // Date filter
+        document.getElementById('auditor-date-filter').onchange = (e) => {
+            this.dateFilter = e.target.value;
+            this.filterAndRenderFlights();
+        };
+
+        // Back button (mobile)
+        document.getElementById('btn-back-to-list').onclick = () => this.resetWorkspace();
+
+        // Workspace action buttons
+        document.getElementById('btn-save-flight-audit').onclick = (e) => {
             e.preventDefault();
             this.saveFlightDetails();
         };
+        document.getElementById('btn-merge-flight-audit').onclick = () => this.mergeIntoFlight();
+        document.getElementById('btn-delete-flight-audit').onclick = () => this.deleteFlight();
 
-        // Merge button
-        const mergeBtn = document.getElementById('btn-merge-flight-audit');
-        mergeBtn.onclick = () => this.mergeIntoFlight();
+        // Tab switching
+        document.querySelectorAll('.auditor-tab').forEach(tab => {
+            tab.onclick = (e) => this.switchTab(e.currentTarget.dataset.tab);
+        });
 
-        // Table header sorting click delegation
+        // Table header sorting
         const tableHeader = document.querySelector('.auditor-table thead');
         if (tableHeader) {
             tableHeader.onclick = (e) => {
                 const th = e.target.closest('th.sortable');
-                if (th) {
-                    const field = th.dataset.field;
-                    if (this.sortField === field) {
-                        this.sortOrder = this.sortOrder === 'asc' ? 'desc' : 'asc';
-                    } else {
-                        this.sortField = field;
-                        this.sortOrder = 'desc';
-                    }
-                    this.renderTelemetryTable(this.currentPositions);
+                if (!th) return;
+                const field = th.dataset.field;
+                if (this.sortField === field) {
+                    this.sortOrder = this.sortOrder === 'asc' ? 'desc' : 'asc';
+                } else {
+                    this.sortField = field;
+                    this.sortOrder = 'desc';
                 }
+                this.renderTelemetryTable(this.currentPositions);
             };
         }
+
+        // Bulk position select
+        document.getElementById('select-all-positions').onchange = (e) => {
+            const visible = this._getVisiblePositionIds();
+            if (e.target.checked) {
+                visible.forEach(id => this.selectedPositionIds.add(id));
+            } else {
+                visible.forEach(id => this.selectedPositionIds.delete(id));
+            }
+            this.renderTelemetryTable(this.currentPositions);
+            this.updateBulkDeleteBtn();
+        };
+
+        // Bulk delete
+        document.getElementById('btn-delete-selected').onclick = () => this.bulkDeletePositions();
+
+        // Anomaly filter
+        document.getElementById('btn-filter-anomalies').onclick = (e) => {
+            this.anomalyFilter = !this.anomalyFilter;
+            e.currentTarget.classList.toggle('active', this.anomalyFilter);
+            this.renderTelemetryTable(this.currentPositions);
+        };
+
+        // Source filter
+        document.getElementById('positions-source-filter').onchange = (e) => {
+            this.sourceFilter = e.target.value;
+            this.renderTelemetryTable(this.currentPositions);
+        };
     },
+
+    switchTab(tab) {
+        this.activeTab = tab;
+        document.querySelectorAll('.auditor-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+        document.querySelectorAll('.auditor-tab-content').forEach(c => {
+            const isActive = c.id === `auditor-tab-${tab}`;
+            c.classList.toggle('active', isActive);
+        });
+    },
+
+    // ── Data Loading ──
 
     async loadFlights() {
         try {
-            // Fetch the last 100 flights
-            const list = await API.getFlights({ limit: 150 });
+            const list = await API.getFlights({ limit: 200 });
             this.flights = list || [];
+            this.populateAircraftFilter();
             this.filterAndRenderFlights();
         } catch (err) {
-            console.error("Failed to load flights for auditor:", err);
+            console.error('Failed to load flights:', err);
             Utils.toast('Failed to load flights', 'error');
         }
     },
 
     async loadAircraftList() {
         try {
-            const list = await API.getAircraft(false); // get all aircraft
+            const list = await API.getAircraft(false);
             const select = document.getElementById('audit-aircraft');
             if (select) {
                 select.innerHTML = '<option value="" disabled selected>Select Aircraft</option>';
                 list.forEach(ac => {
-                    const label = ac.category === 'helicopter' ? '🚁' : '✈';
-                    select.innerHTML += `<option value="${ac.id}">${label} ${ac.tail_number || 'N/A'} (${ac.type || 'Unknown'})</option>`;
+                    const icon = ac.category === 'helicopter' ? '🚁' : '✈';
+                    select.innerHTML += `<option value="${ac.id}">${icon} ${ac.tail_number || 'N/A'} (${ac.type || 'Unknown'})</option>`;
                 });
             }
         } catch (err) {
-            console.error("Failed to load aircraft list for auditor:", err);
+            console.error('Failed to load aircraft list:', err);
         }
     },
 
+    populateAircraftFilter() {
+        const select = document.getElementById('auditor-aircraft-filter');
+        const seen = new Map();
+        this.flights.forEach(f => {
+            if (f.tail_number && !seen.has(String(f.aircraft_id))) {
+                seen.set(String(f.aircraft_id), f.tail_number);
+            }
+        });
+        const currentVal = select.value;
+        select.innerHTML = '<option value="">All Aircraft</option>';
+        seen.forEach((tail, id) => {
+            select.innerHTML += `<option value="${id}">${tail}</option>`;
+        });
+        if (currentVal) select.value = currentVal;
+    },
+
+    // ── Flight List Rendering ──
+
     filterAndRenderFlights() {
-        const q = document.getElementById('auditor-flight-search').value.toLowerCase().trim();
-        const statusFilter = document.getElementById('auditor-flight-status-filter').value;
+        const q = (this.searchQuery || '').toLowerCase().trim();
         const container = document.getElementById('auditor-flights-list');
-        
         container.innerHTML = '';
 
-        const filtered = this.flights.filter(f => {
-            const matchesSearch = 
-                (f.flight_number && f.flight_number.toLowerCase().includes(q)) ||
-                (f.callsign && f.callsign.toLowerCase().includes(q)) ||
-                (f.departure_iata && f.departure_iata.toLowerCase().includes(q)) ||
-                (f.arrival_iata && f.arrival_iata.toLowerCase().includes(q));
-            
-            const matchesStatus = statusFilter === 'all' || f.status === statusFilter;
-            
-            return matchesSearch && matchesStatus;
+        let filtered = this.flights.filter(f => {
+            if (q) {
+                const match =
+                    (f.flight_number && f.flight_number.toLowerCase().includes(q)) ||
+                    (f.callsign && f.callsign.toLowerCase().includes(q)) ||
+                    (f.departure_iata && f.departure_iata.toLowerCase().includes(q)) ||
+                    (f.arrival_iata && f.arrival_iata.toLowerCase().includes(q)) ||
+                    (f.tail_number && f.tail_number.toLowerCase().includes(q)) ||
+                    (f.departure_name && f.departure_name.toLowerCase().includes(q)) ||
+                    (f.arrival_name && f.arrival_name.toLowerCase().includes(q));
+                if (!match) return false;
+            }
+            if (this.statusFilter !== 'all' && f.status !== this.statusFilter) return false;
+            if (this.aircraftFilter && String(f.aircraft_id) !== this.aircraftFilter) return false;
+            if (this.dateFilter && this.dateFilter !== 'all') {
+                const days = parseInt(this.dateFilter);
+                const cutoff = new Date(Date.now() - days * 86400000);
+                const ref = f.actual_departure || f.scheduled_departure || f.created_at;
+                if (!ref || new Date(ref) < cutoff) return false;
+            }
+            return true;
         });
 
-        if (filtered.length === 0) {
-            container.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--text-secondary); font-size: 12px;">No flights match criteria</div>';
-            return;
-        }
-
-        // Sort: Active first, then by updated_at or scheduled_departure desc
+        // Sort: active first, then scheduled, then by created_at desc
+        const order = { active: 0, scheduled: 1, completed: 2, landed: 2 };
         filtered.sort((a, b) => {
-            if (a.status === 'active' && b.status !== 'active') return -1;
-            if (b.status === 'active' && a.status !== 'active') return 1;
+            const diff = (order[a.status] ?? 3) - (order[b.status] ?? 3);
+            if (diff !== 0) return diff;
             return new Date(b.created_at) - new Date(a.created_at);
         });
 
-        filtered.forEach(f => {
-            const el = document.createElement('div');
-            el.className = `auditor-flight-item ${f.id === this.selectedFlightId ? 'active' : ''}`;
-            
-            let statusColor = 'var(--text-secondary)';
-            if (f.status === 'active') statusColor = 'var(--green)';
-            if (f.status === 'scheduled') statusColor = 'var(--accent)';
-            if (f.status === 'completed') statusColor = 'var(--text-muted, #7f8c8d)';
+        const countEl = document.getElementById('auditor-flight-count');
+        if (countEl) countEl.textContent = `${filtered.length} flight${filtered.length !== 1 ? 's' : ''}`;
 
-            el.innerHTML = `
-                <div class="auditor-flight-info-row">
-                    <span class="auditor-flight-number">${f.flight_number || f.callsign || 'Unknown Flight'}</span>
-                    <span class="auditor-flight-status" style="background: rgba(255, 255, 255, 0.05); color: ${statusColor}; border: 1px solid ${statusColor}44;">${f.status}</span>
-                </div>
-                <div class="auditor-flight-info-row" style="font-size: 11px; margin-top: 4px;">
-                    <span class="auditor-flight-tail">Tail: ${f.tail_number || 'N/A'}</span>
-                    <span class="auditor-flight-route">${f.departure_iata || '???'} → ${f.arrival_iata || '???'}</span>
-                </div>
-            `;
+        if (filtered.length === 0) {
+            container.innerHTML = '<div class="auditor-empty-list">No flights match your filters</div>';
+            return;
+        }
 
-            el.onclick = () => this.selectFlight(f.id);
-            container.appendChild(el);
-        });
+        filtered.forEach(f => container.appendChild(this.buildFlightCard(f)));
     },
+
+    buildFlightCard(f) {
+        const el = document.createElement('div');
+        el.className = `auditor-flight-card${f.id === this.selectedFlightId ? ' active' : ''}`;
+        el.dataset.flightId = f.id;
+
+        const colors = { active: 'var(--green)', scheduled: 'var(--accent)', completed: 'var(--text-muted)', landed: 'var(--text-muted)' };
+        const statusColor = colors[f.status] || 'var(--text-muted)';
+
+        const dep = f.departure_iata || f.departure_icao || '???';
+        const arr = f.arrival_iata || f.arrival_icao || '???';
+        const label = f.flight_number || f.callsign || 'Unknown Flight';
+        const tailHtml = f.tail_number ? `<span class="card-tail">${f.tail_number}</span>` : '';
+
+        const depTime = f.actual_departure || f.scheduled_departure;
+        const arrTime = f.actual_arrival || f.scheduled_arrival;
+        const depStr = depTime ? Utils.formatDateTime(depTime) : '—';
+        const arrStr = arrTime ? Utils.formatDateTime(arrTime) : '—';
+
+        const posCount = f.position_count != null ? f.position_count : '—';
+        const updatedStr = Utils.timeAgo(f.updated_at);
+        const createdStr = Utils.formatDateTime(f.created_at);
+
+        el.innerHTML = `
+            <div class="card-header-row">
+                <div class="card-id">
+                    <span class="card-flight-num">${label}</span>
+                    ${tailHtml}
+                </div>
+                <div class="card-header-right">
+                    <span class="card-status-badge" style="color:${statusColor};">${f.status}</span>
+                    <button class="card-delete-btn" title="Delete flight" onclick="event.stopPropagation(); TelemetryAuditor.deleteFlightById('${f.id}')">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                </div>
+            </div>
+            <div class="card-route">${dep} → ${arr}</div>
+            <div class="card-times">
+                <span class="card-time-item"><span class="card-time-label">Dep</span> ${depStr}</span>
+                <span class="card-time-sep">·</span>
+                <span class="card-time-item"><span class="card-time-label">Arr</span> ${arrStr}</span>
+            </div>
+            <div class="card-meta">
+                <span class="card-pos-count">${posCount} pts</span>
+                <span class="card-meta-sep">·</span>
+                <span title="Created ${createdStr}">Updated ${updatedStr}</span>
+            </div>
+        `;
+
+        el.onclick = () => this.selectFlight(f.id);
+        return el;
+    },
+
+    // ── Flight Selection & Workspace ──
 
     async selectFlight(flightId) {
         this.selectedFlightId = flightId;
-        
-        // Highlight active flight item
-        document.querySelectorAll('.auditor-flight-item').forEach(el => el.classList.remove('active'));
-        this.filterAndRenderFlights(); // Refreshes classes
+        this.filterAndRenderFlights();
 
         document.getElementById('auditor-main-empty').style.display = 'none';
-        document.getElementById('auditor-workspace').style.display = 'flex';
-        const container = document.querySelector('.auditor-container');
-        if (container) {
-            container.classList.add('flight-selected');
-        }
+        const ws = document.getElementById('auditor-workspace');
+        ws.style.display = 'flex';
+        document.querySelector('.auditor-container').classList.add('flight-selected');
 
         this.sortField = 'timestamp';
         this.sortOrder = 'desc';
+        this.selectedPositionIds.clear();
+        this.anomalyFilter = false;
+        this.sourceFilter = '';
+        document.getElementById('btn-filter-anomalies').classList.remove('active');
+        document.getElementById('positions-source-filter').value = '';
+
+        // Always start on Details tab when selecting a new flight
+        this.switchTab('details');
 
         try {
             const [flight, positions] = await Promise.all([
                 API.getFlight(flightId),
-                API.getFlightPositions(flightId)
+                API.getFlightPositions(flightId),
             ]);
 
             this.currentFlight = flight;
             this.currentPositions = positions || [];
-            
-            // Set flight category
             this.flightCategory = (flight.aircraft && flight.aircraft.category) || 'plane';
 
+            this.renderWorkspaceHeader(flight, this.currentPositions.length);
             this.renderFlightForm(flight);
-            this.renderTelemetryTable(positions);
+            this.renderTelemetryTable(this.currentPositions);
         } catch (err) {
-            console.error("Failed to load flight workspace:", err);
+            console.error('Failed to load flight workspace:', err);
             Utils.toast('Failed to load flight details', 'error');
             this.resetWorkspace();
         }
     },
+
+    renderWorkspaceHeader(flight, posCount) {
+        const label = flight.flight_number || flight.callsign || 'Unknown Flight';
+        const tailPart = flight.aircraft?.tail_number ? ` · ${flight.aircraft.tail_number}` : '';
+        document.getElementById('ws-flight-label').textContent = label + tailPart;
+
+        const dep = flight.departure_iata || flight.departure_icao || flight.departure_name || '???';
+        const arr = flight.arrival_iata || flight.arrival_icao || flight.arrival_name || '???';
+        document.getElementById('ws-route-label').textContent = `${dep} → ${arr}`;
+
+        document.getElementById('auditor-pos-count-badge').textContent = posCount;
+
+        const statsBar = document.getElementById('ws-stats-bar');
+        const s = flight.summary_stats;
+        let html = `<span class="ws-stat-chip"><strong>${posCount}</strong> pts</span>`;
+
+        if (s) {
+            if (s.distance_nm) html += `<span class="ws-stat-chip"><strong>${Math.round(s.distance_nm)}</strong> NM</span>`;
+            if (s.avg_speed_kts) html += `<span class="ws-stat-chip"><strong>${Math.round(s.avg_speed_kts)}</strong> kts avg</span>`;
+            if (s.max_altitude_ft) {
+                const altLabel = s.max_altitude_ft >= 18000
+                    ? `FL${Math.round(s.max_altitude_ft / 100)}`
+                    : `${Math.round(s.max_altitude_ft).toLocaleString()} ft`;
+                html += `<span class="ws-stat-chip"><strong>${altLabel}</strong></span>`;
+            }
+        }
+        html += `<span class="ws-stat-chip" title="Created ${Utils.formatDateTime(flight.created_at)}">Updated ${Utils.timeAgo(flight.updated_at)}</span>`;
+        statsBar.innerHTML = html;
+    },
+
+    // ── TZ Helpers ──
 
     formatISOToLocal(isoString) {
         if (!isoString) return '';
@@ -222,7 +387,6 @@ const TelemetryAuditor = {
         return `${parts.year}-${parts.month}-${parts.day}T${h}:${parts.minute}`;
     },
 
-    // Convert a "YYYY-MM-DDTHH:MM" string in the user's timezone to a UTC ISO string.
     _localToUTC(localStr) {
         const asUTC = new Date(localStr + 'Z').getTime();
         const inTz = new Date(asUTC).toLocaleString('sv-SE', { timeZone: Utils.getTimezone() }).replace(' ', 'T');
@@ -238,6 +402,8 @@ const TelemetryAuditor = {
         } catch { return Utils.getTimezone(); }
     },
 
+    // ── Flight Form ──
+
     renderFlightForm(f) {
         document.getElementById('audit-aircraft').value = f.aircraft_id || '';
         document.getElementById('audit-flight-number').value = f.flight_number || '';
@@ -246,19 +412,20 @@ const TelemetryAuditor = {
         document.getElementById('audit-dep-iata').value = f.departure_iata || '';
         document.getElementById('audit-dep-icao').value = f.departure_icao || '';
         document.getElementById('audit-dep-name').value = f.departure_name || '';
-        document.getElementById('audit-dep-lat').value = f.departure_lat !== null ? f.departure_lat : '';
-        document.getElementById('audit-dep-lon').value = f.departure_lon !== null ? f.departure_lon : '';
+        document.getElementById('audit-dep-lat').value = f.departure_lat != null ? f.departure_lat : '';
+        document.getElementById('audit-dep-lon').value = f.departure_lon != null ? f.departure_lon : '';
         document.getElementById('audit-arr-iata').value = f.arrival_iata || '';
         document.getElementById('audit-arr-icao').value = f.arrival_icao || '';
         document.getElementById('audit-arr-name').value = f.arrival_name || '';
-        document.getElementById('audit-arr-lat').value = f.arrival_lat !== null ? f.arrival_lat : '';
-        document.getElementById('audit-arr-lon').value = f.arrival_lon !== null ? f.arrival_lon : '';
-        
+        document.getElementById('audit-arr-lat').value = f.arrival_lat != null ? f.arrival_lat : '';
+        document.getElementById('audit-arr-lon').value = f.arrival_lon != null ? f.arrival_lon : '';
         document.getElementById('audit-sched-dep').value = this.formatISOToLocal(f.scheduled_departure);
         document.getElementById('audit-sched-arr').value = this.formatISOToLocal(f.scheduled_arrival);
         document.getElementById('audit-act-dep').value = this.formatISOToLocal(f.actual_departure);
         document.getElementById('audit-act-arr').value = this.formatISOToLocal(f.actual_arrival);
+        document.getElementById('audit-route').value = f.expected_route || '';
 
+        // TZ labels
         const tzLabel = this._tzAbbr();
         [1, 2, 3, 4].forEach(n => {
             const el = document.getElementById(`audit-tz-label-${n}`);
@@ -266,43 +433,33 @@ const TelemetryAuditor = {
         });
         const colLabel = document.getElementById('auditor-tz-col-label');
         if (colLabel) colLabel.textContent = tzLabel;
-        
-        document.getElementById('audit-route').value = f.expected_route || '';
 
-        // Display summary stats
+        // Stats section
         const statsEl = document.getElementById('flight-audit-stats-summary');
         if (f.summary_stats) {
             const s = f.summary_stats;
-            statsEl.innerHTML = `
-                <strong>Stats Summary:</strong> 
-                Distance: ${s.distance_nm ? s.distance_nm.toFixed(1) : 0} NM | 
-                Avg Speed: ${s.avg_speed_kts ? Math.round(s.avg_speed_kts) : 0} kts | 
-                Max Speed: ${s.max_speed_kts ? Math.round(s.max_speed_kts) : 0} kts | 
-                Max Alt: ${s.max_altitude_ft ? Math.round(s.max_altitude_ft).toLocaleString() : 0} ft
-            `;
+            statsEl.innerHTML = [
+                s.distance_nm != null ? `<div class="audit-stat-item"><span class="audit-stat-label">Distance</span><span class="audit-stat-value">${s.distance_nm.toFixed(1)} <small>NM</small></span></div>` : '',
+                s.avg_speed_kts != null ? `<div class="audit-stat-item"><span class="audit-stat-label">Avg Speed</span><span class="audit-stat-value">${Math.round(s.avg_speed_kts)} <small>kts</small></span></div>` : '',
+                s.max_speed_kts != null ? `<div class="audit-stat-item"><span class="audit-stat-label">Max Speed</span><span class="audit-stat-value">${Math.round(s.max_speed_kts)} <small>kts</small></span></div>` : '',
+                s.max_altitude_ft != null ? `<div class="audit-stat-item"><span class="audit-stat-label">Max Altitude</span><span class="audit-stat-value">${Math.round(s.max_altitude_ft).toLocaleString()} <small>ft</small></span></div>` : '',
+                f.created_at ? `<div class="audit-stat-item"><span class="audit-stat-label">Created</span><span class="audit-stat-value small">${Utils.formatDateTime(f.created_at)}</span></div>` : '',
+                f.updated_at ? `<div class="audit-stat-item"><span class="audit-stat-label">Updated</span><span class="audit-stat-value small">${Utils.formatDateTime(f.updated_at)}</span></div>` : '',
+            ].join('');
         } else {
-            statsEl.innerHTML = '<strong>Stats Summary:</strong> No stats available (needs telemetry points)';
+            statsEl.innerHTML = '<p style="color: var(--text-muted); font-size: 12px; margin: 0;">No stats available yet — needs telemetry points.</p>';
         }
     },
 
     async saveFlightDetails() {
         if (!this.selectedFlightId) return;
 
-        const parseCoord = (id) => {
-            const val = document.getElementById(id).value;
-            return val === '' ? null : parseFloat(val);
-        };
-
-        const parseTime = (id) => {
-            const val = document.getElementById(id).value;
-            return val === '' ? null : this._localToUTC(val);
-        };
-
+        const parseCoord = id => { const v = document.getElementById(id).value; return v === '' ? null : parseFloat(v); };
+        const parseTime = id => { const v = document.getElementById(id).value; return v === '' ? null : this._localToUTC(v); };
         const aircraftVal = document.getElementById('audit-aircraft').value;
-        const aircraftId = aircraftVal ? parseInt(aircraftVal) : null;
 
         const data = {
-            aircraft_id: aircraftId,
+            aircraft_id: aircraftVal ? aircraftVal : null,
             flight_number: document.getElementById('audit-flight-number').value || null,
             callsign: document.getElementById('audit-callsign').value || null,
             status: document.getElementById('audit-status').value,
@@ -320,40 +477,126 @@ const TelemetryAuditor = {
             scheduled_arrival: parseTime('audit-sched-arr'),
             actual_departure: parseTime('audit-act-dep'),
             actual_arrival: parseTime('audit-act-arr'),
-            expected_route: document.getElementById('audit-route').value || null
+            expected_route: document.getElementById('audit-route').value || null,
         };
 
         try {
-            const updated = await API.updateFlight(this.selectedFlightId, data);
-            Utils.toast('Flight metadata saved and audit logged.', 'success');
-            
-            // Reload flight lists and current details
-            this.loadFlights();
+            await API.updateFlight(this.selectedFlightId, data);
+            Utils.toast('Flight details saved.', 'success');
+            await this.loadFlights();
             this.selectFlight(this.selectedFlightId);
         } catch (err) {
-            console.error("Failed to save flight details:", err);
-            Utils.toast(`Failed to save: ${err.message}`, 'error');
+            console.error('Failed to save flight details:', err);
+            Utils.toast(`Save failed: ${err.message}`, 'error');
+        }
+    },
+
+    // ── Delete Flight ──
+
+    async deleteFlight() {
+        if (!this.selectedFlightId || !this.currentFlight) return;
+        await this.deleteFlightById(this.selectedFlightId);
+    },
+
+    async deleteFlightById(flightId) {
+        const flight = this.flights.find(f => f.id === flightId) || (this.selectedFlightId === flightId ? this.currentFlight : null);
+        const label = flight ? (flight.flight_number || flight.callsign || 'this flight') : 'this flight';
+        const posCount = (flightId === this.selectedFlightId) ? this.currentPositions.length : (flight?.position_count || 0);
+        const posMsg = posCount > 0 ? ` and its ${posCount} position record${posCount !== 1 ? 's' : ''}` : '';
+
+        if (!confirm(`Permanently delete "${label}"${posMsg}? This cannot be undone.`)) return;
+
+        try {
+            await API.deleteFlight(flightId);
+            Utils.toast('Flight deleted.', 'success');
+
+            this.flights = this.flights.filter(f => f.id !== flightId);
+
+            if (this.selectedFlightId === flightId) {
+                this.currentFlight = null;
+                this.currentPositions = [];
+                this.selectedPositionIds.clear();
+                this.resetWorkspace();
+            } else {
+                this.filterAndRenderFlights();
+            }
+
+            if (window.Flights) window.Flights.loadFlights();
+        } catch (err) {
+            Utils.toast(`Delete failed: ${err.message}`, 'error');
+        }
+    },
+
+    // ── Telemetry Table ──
+
+    _getVisiblePositionIds() {
+        const anomalies = this.detectAnomalies(this.currentPositions, this.flightCategory);
+        return this.currentPositions
+            .filter(p => {
+                if (this.sourceFilter && (p.source || '').toLowerCase() !== this.sourceFilter) return false;
+                if (this.anomalyFilter && !anomalies[p.id]?.row.length) return false;
+                return true;
+            })
+            .map(p => p.id);
+    },
+
+    updateBulkDeleteBtn() {
+        const count = this.selectedPositionIds.size;
+        const btn = document.getElementById('btn-delete-selected');
+        const countEl = document.getElementById('selected-count');
+        if (btn) btn.disabled = count === 0;
+        if (countEl) countEl.textContent = count;
+    },
+
+    async bulkDeletePositions() {
+        const count = this.selectedPositionIds.size;
+        if (count === 0) return;
+        if (!confirm(`Delete ${count} position report${count !== 1 ? 's' : ''}? This cannot be undone.`)) return;
+
+        try {
+            const ids = Array.from(this.selectedPositionIds);
+            await Promise.all(ids.map(id => API.deletePosition(id)));
+            Utils.toast(`${count} position${count !== 1 ? 's' : ''} deleted.`, 'success');
+            this.selectedPositionIds.clear();
+            this.updateBulkDeleteBtn();
+            this.selectFlight(this.selectedFlightId);
+        } catch (err) {
+            Utils.toast(`Error: ${err.message}`, 'error');
         }
     },
 
     renderTelemetryTable(positions) {
         const tbody = document.getElementById('auditor-telemetry-tbody');
-        const badge = document.getElementById('telemetry-count-badge');
-        
         tbody.innerHTML = '';
-        badge.textContent = `${positions.length} reports`;
 
-        if (positions.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 30px; color: var(--text-secondary);">No position logs for this flight.</td></tr>';
+        // Update position count badge
+        document.getElementById('auditor-pos-count-badge').textContent = positions.length;
+
+        // Detect anomalies for all positions
+        const anomalies = this.detectAnomalies(positions, this.flightCategory);
+
+        // Apply filters
+        const filtered = positions.filter(p => {
+            if (this.sourceFilter && (p.source || '').toLowerCase() !== this.sourceFilter) return false;
+            if (this.anomalyFilter && !anomalies[p.id]?.row.length) return false;
+            return true;
+        });
+
+        if (filtered.length === 0) {
+            const msg = positions.length === 0
+                ? 'No position records for this flight.'
+                : 'No positions match the current filter.';
+            tbody.innerHTML = `<tr><td colspan="12" style="text-align:center; padding:30px; color:var(--text-muted);">${msg}</td></tr>`;
+            // Sync select-all
+            document.getElementById('select-all-positions').checked = false;
             return;
         }
 
-        // Update header sort indicators
+        // Update sort indicators
         document.querySelectorAll('.auditor-table th.sortable').forEach(th => {
-            const field = th.dataset.field;
             const iconSpan = th.querySelector('.sort-icon');
             if (iconSpan) {
-                if (field === this.sortField) {
+                if (th.dataset.field === this.sortField) {
                     iconSpan.textContent = this.sortOrder === 'asc' ? ' ▲' : ' ▼';
                     th.style.color = 'var(--accent)';
                 } else {
@@ -363,56 +606,51 @@ const TelemetryAuditor = {
             }
         });
 
-        // Run client-side anomaly checks
-        const anomalies = this.detectAnomalies(positions, this.flightCategory);
-
-        // Sort by selected field
-        const sorted = [...positions].sort((a, b) => {
-            let valA, valB;
+        // Sort
+        const sorted = [...filtered].sort((a, b) => {
+            let va, vb;
             if (this.sortField === 'timestamp') {
-                valA = new Date(a.timestamp).getTime();
-                valB = new Date(b.timestamp).getTime();
+                va = new Date(a.timestamp).getTime();
+                vb = new Date(b.timestamp).getTime();
             } else if (this.sortField === 'status') {
-                valA = anomalies[a.id]?.row.length || 0;
-                valB = anomalies[b.id]?.row.length || 0;
+                va = anomalies[a.id]?.row.length || 0;
+                vb = anomalies[b.id]?.row.length || 0;
             } else if (this.sortField === 'source') {
-                valA = a.source || '';
-                valB = b.source || '';
-                return this.sortOrder === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+                va = a.source || '';
+                vb = b.source || '';
+                return this.sortOrder === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
             } else {
-                valA = a[this.sortField];
-                valB = b[this.sortField];
-                if (valA === null || valA === undefined) valA = -999999;
-                if (valB === null || valB === undefined) valB = -999999;
+                va = a[this.sortField] ?? -999999;
+                vb = b[this.sortField] ?? -999999;
             }
-
-            if (valA < valB) return this.sortOrder === 'asc' ? -1 : 1;
-            if (valA > valB) return this.sortOrder === 'asc' ? 1 : -1;
+            if (va < vb) return this.sortOrder === 'asc' ? -1 : 1;
+            if (va > vb) return this.sortOrder === 'asc' ? 1 : -1;
             return 0;
         });
+
+        const allVisibleSelected = sorted.every(p => this.selectedPositionIds.has(p.id));
+        document.getElementById('select-all-positions').checked = sorted.length > 0 && allVisibleSelected;
 
         sorted.forEach(p => {
             const tr = document.createElement('tr');
             const pAnomaly = anomalies[p.id] || { fields: {}, row: [] };
-            
-            if (pAnomaly.row.length > 0) {
-                tr.className = 'anomaly-row';
-            }
+            const isSelected = this.selectedPositionIds.has(p.id);
 
-            const timeStr = Utils.formatDateTimeSecs(p.timestamp);
+            if (pAnomaly.row.length > 0) tr.className = 'anomaly-row';
+            if (isSelected) tr.classList.add('row-selected');
 
-            // Create cells, applying anomaly formatting
-            const getTd = (val, fieldName) => {
-                const isAnom = pAnomaly.fields[fieldName];
-                return `<td class="${isAnom ? 'anomaly-cell' : ''}" title="${isAnom || ''}">${val !== null ? val : 'N/A'}</td>`;
+            const getTd = (val, field) => {
+                const isAnom = pAnomaly.fields[field];
+                return `<td class="${isAnom ? 'anomaly-cell' : ''}" title="${isAnom || ''}">${val != null ? val : 'N/A'}</td>`;
             };
 
-            const statusContent = pAnomaly.row.length > 0 
-                ? `<span class="anomaly-badge" title="${pAnomaly.row.map(r => `${r}: ${pAnomaly.fields.ground_speed_kts || pAnomaly.fields.altitude_ft || pAnomaly.fields.latitude || ''}`).join(', ')}">Anomaly: ${pAnomaly.row.join(', ')}</span>`
-                : `<span style="color: var(--green); font-weight: 500;">Valid</span>`;
+            const timeStr = Utils.formatDateTimeSecs(p.timestamp);
+            const statusContent = pAnomaly.row.length > 0
+                ? `<span class="anomaly-badge" title="${pAnomaly.row.join(', ')}">⚠ ${pAnomaly.row.join(', ')}</span>`
+                : `<span style="color:var(--green); font-size:11px;">✓ Valid</span>`;
 
-            const sourceBadge = p.source 
-                ? `<span class="source-badge source-${p.source.toLowerCase()}">${p.source}</span>` 
+            const sourceBadge = p.source
+                ? `<span class="source-badge source-${p.source.toLowerCase()}">${p.source}</span>`
                 : `<span class="source-badge">N/A</span>`;
 
             const aglFt = p.agl_ft != null ? Math.round(p.agl_ft).toLocaleString() : (p.ground_elevation_ft == null ? '—' : '0');
@@ -421,20 +659,23 @@ const TelemetryAuditor = {
                 : 'Terrain elevation not available';
 
             tr.innerHTML = `
-                <td>${timeStr}</td>
+                <td style="padding: 7px 10px; text-align:center;">
+                    <input type="checkbox" class="row-checkbox" ${isSelected ? 'checked' : ''} onclick="event.stopPropagation(); TelemetryAuditor._togglePosition(${p.id}, this)">
+                </td>
+                <td style="white-space:nowrap; font-size:11px;">${timeStr}</td>
                 ${getTd(p.latitude.toFixed(5), 'latitude')}
                 ${getTd(p.longitude.toFixed(5), 'longitude')}
-                ${getTd(p.altitude_ft ? p.altitude_ft.toLocaleString() : 0, 'altitude_ft')}
+                ${getTd(p.altitude_ft ? Math.round(p.altitude_ft).toLocaleString() : 0, 'altitude_ft')}
                 <td title="${aglTitle}" style="color:${p.ground_elevation_ft == null ? 'var(--text-muted)' : ''}">${aglFt}</td>
                 ${getTd(p.ground_speed_kts ? Math.round(p.ground_speed_kts) : 0, 'ground_speed_kts')}
-                <td>${p.heading !== null ? Math.round(p.heading) : 'N/A'}</td>
-                ${getTd(p.vertical_rate_fpm ? p.vertical_rate_fpm.toLocaleString() : 0, 'vertical_rate_fpm')}
+                <td>${p.heading != null ? Math.round(p.heading) : 'N/A'}</td>
+                ${getTd(p.vertical_rate_fpm ? Math.round(p.vertical_rate_fpm).toLocaleString() : 0, 'vertical_rate_fpm')}
                 <td>${sourceBadge}</td>
                 <td>${statusContent}</td>
-                <td style="text-align: right; white-space: nowrap;">
-                    <button class="btn-ghost" style="padding: 2px 6px; font-size: 11px; margin-right: 4px;" onclick="TelemetryAuditor.editPosition(${p.id})">Edit</button>
-                    <button class="btn-ghost" style="padding: 2px 6px; font-size: 11px; margin-right: 4px;" onclick="TelemetryAuditor.reassignPosition(${p.id})">Reassign</button>
-                    <button class="btn-ghost delete-icon" style="padding: 2px 6px; font-size: 11px; color: var(--red);" onclick="TelemetryAuditor.deletePosition(${p.id})">Delete</button>
+                <td style="text-align:right; white-space:nowrap;">
+                    <button class="btn-ghost" style="padding:2px 6px; font-size:11px; margin-right:3px;" onclick="TelemetryAuditor.editPosition(${p.id})">Edit</button>
+                    <button class="btn-ghost" style="padding:2px 6px; font-size:11px; margin-right:3px;" onclick="TelemetryAuditor.reassignPosition(${p.id})">Move</button>
+                    <button class="btn-ghost" style="padding:2px 6px; font-size:11px; color:var(--red);" onclick="TelemetryAuditor.deletePosition(${p.id})">Del</button>
                 </td>
             `;
 
@@ -442,195 +683,180 @@ const TelemetryAuditor = {
         });
     },
 
+    _togglePosition(posId, checkbox) {
+        if (checkbox.checked) {
+            this.selectedPositionIds.add(posId);
+        } else {
+            this.selectedPositionIds.delete(posId);
+        }
+        // Update row highlight
+        const row = checkbox.closest('tr');
+        if (row) row.classList.toggle('row-selected', checkbox.checked);
+        // Sync select-all
+        const visibleIds = this._getVisiblePositionIds();
+        const allChecked = visibleIds.length > 0 && visibleIds.every(id => this.selectedPositionIds.has(id));
+        document.getElementById('select-all-positions').checked = allChecked;
+        this.updateBulkDeleteBtn();
+    },
+
+    // ── Anomaly Detection ──
+
     detectAnomalies(positions, flightCategory) {
-        const anomalies = {}; // maps position.id -> { fields: { fieldName: description }, row: description }
-        
-        // Sort positions by timestamp ascending to evaluate sequence
+        const anomalies = {};
         const sorted = [...positions].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-        
+
         for (let i = 0; i < sorted.length; i++) {
             const curr = sorted[i];
             const prev = i > 0 ? sorted[i - 1] : null;
-            
             anomalies[curr.id] = { fields: {}, row: [] };
-            
-            // Rule 1: Speed check based on aircraft category
             const isHeli = flightCategory === 'helicopter';
-            const speedLimit = isHeli ? 180 : 600; // knots
+            const speedLimit = isHeli ? 180 : 600;
+
             if (curr.ground_speed_kts > speedLimit) {
-                anomalies[curr.id].fields.ground_speed_kts = `Speed exceeds typical limit for ${flightCategory} (${curr.ground_speed_kts} kts)`;
-                anomalies[curr.id].row.push("Extreme Speed");
+                anomalies[curr.id].fields.ground_speed_kts = `Speed exceeds limit (${curr.ground_speed_kts} kts)`;
+                anomalies[curr.id].row.push('Extreme Speed');
             }
-            
-            // Rule 2: Altitude spikes
             const maxAlt = isHeli ? 12000 : 45000;
             if (curr.altitude_ft > maxAlt) {
                 anomalies[curr.id].fields.altitude_ft = `Altitude exceeds ceiling (${curr.altitude_ft} ft)`;
-                anomalies[curr.id].row.push("Extreme Altitude");
+                anomalies[curr.id].row.push('Extreme Altitude');
             }
-            
-            // Rule 3: Vertical Rate Spikes
             if (curr.vertical_rate_fpm && Math.abs(curr.vertical_rate_fpm) > 8000) {
                 anomalies[curr.id].fields.vertical_rate_fpm = `Improbable vertical rate (${curr.vertical_rate_fpm} fpm)`;
-                anomalies[curr.id].row.push("Extreme V-Rate");
+                anomalies[curr.id].row.push('Extreme V-Rate');
             }
-            
-            // Rule 4: Sequential distance checks (haversine speed check)
             if (prev) {
                 const timeDiffSec = (new Date(curr.timestamp) - new Date(prev.timestamp)) / 1000;
                 if (timeDiffSec > 0) {
                     const distNM = this.haversineDistance(prev.latitude, prev.longitude, curr.latitude, curr.longitude);
-                    const calcSpeedKts = (distNM / (timeDiffSec / 3600));
-                    
-                    // If calculated speed between points is physically impossible
-                    if (calcSpeedKts > speedLimit + 100 && distNM > 1) {
-                        anomalies[curr.id].fields.latitude = `Impossible displacement speed: ${Math.round(calcSpeedKts)} kts`;
-                        anomalies[curr.id].fields.longitude = `Impossible displacement speed: ${Math.round(calcSpeedKts)} kts`;
-                        anomalies[curr.id].row.push("Spatial Jump");
+                    const calcSpeed = distNM / (timeDiffSec / 3600);
+                    if (calcSpeed > speedLimit + 100 && distNM > 1) {
+                        anomalies[curr.id].fields.latitude = `Impossible displacement: ${Math.round(calcSpeed)} kts`;
+                        anomalies[curr.id].fields.longitude = `Impossible displacement: ${Math.round(calcSpeed)} kts`;
+                        anomalies[curr.id].row.push('Spatial Jump');
                     }
-                    
-                    // If altitude jump is impossible
                     const altDiff = Math.abs(curr.altitude_ft - prev.altitude_ft);
                     const calcVRate = altDiff / (timeDiffSec / 60);
                     if (calcVRate > 12000 && altDiff > 1000) {
-                        anomalies[curr.id].fields.altitude_ft = `Impossible altitude rate of change: ${Math.round(calcVRate)} fpm`;
-                        anomalies[curr.id].row.push("Altitude Spike");
+                        anomalies[curr.id].fields.altitude_ft = `Impossible altitude change: ${Math.round(calcVRate)} fpm`;
+                        anomalies[curr.id].row.push('Altitude Spike');
                     }
                 }
             }
         }
-        
         return anomalies;
     },
 
     haversineDistance(lat1, lon1, lat2, lon2) {
         if (lat1 === lat2 && lon1 === lon2) return 0;
-        const R = 3440.065; // NM
+        const R = 3440.065;
         const dLat = (lat2 - lat1) * Math.PI / 180;
         const dLon = (lon2 - lon1) * Math.PI / 180;
-        const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-                  Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-                  Math.sin(dLon / 2) * Math.sin(dLon / 2);
-        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-        return R * c;
+        const a = Math.sin(dLat / 2) ** 2 +
+            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     },
 
-    // --- Telemetry Edit Actions ---
+    // ── Position Actions ──
+
     async editPosition(posId) {
         const p = this.currentPositions.find(x => x.id === posId);
         if (!p) return;
 
-        // Render a nice clean inline edit popover modal
         const overlay = document.createElement('div');
         overlay.className = 'popover-overlay';
         overlay.id = 'edit-pos-popover';
-
         overlay.innerHTML = `
-            <div class="modal">
-                <h3 style="margin-bottom: 16px; font-weight: 600; display: flex; justify-content: space-between; align-items: center;">
-                    <span>Edit Position Report #${p.id}</span>
-                    <span class="source-badge source-${(p.source || 'n/a').toLowerCase()}">${p.source || 'N/A'}</span>
+            <div class="modal" style="max-width: 440px;">
+                <h3 style="margin-bottom:16px; font-weight:600; display:flex; justify-content:space-between; align-items:center;">
+                    <span>Edit Position #${p.id}</span>
+                    <span class="source-badge source-${(p.source || 'na').toLowerCase()}">${p.source || 'N/A'}</span>
                 </h3>
-                <form id="edit-pos-form" style="display: flex; flex-direction: column; gap: 12px;">
-                    <div style="display: flex; gap: 10px;">
-                        <div class="form-group" style="flex: 1;">
-                            <label style="font-size: 11px;">Latitude</label>
+                <form id="edit-pos-form" style="display:flex; flex-direction:column; gap:12px;">
+                    <div style="display:flex; gap:10px;">
+                        <div class="form-group" style="flex:1;">
+                            <label style="font-size:11px;">Latitude</label>
                             <input type="number" id="edit-lat" class="input-field" step="any" value="${p.latitude}" required>
                         </div>
-                        <div class="form-group" style="flex: 1;">
-                            <label style="font-size: 11px;">Longitude</label>
+                        <div class="form-group" style="flex:1;">
+                            <label style="font-size:11px;">Longitude</label>
                             <input type="number" id="edit-lon" class="input-field" step="any" value="${p.longitude}" required>
                         </div>
                     </div>
-                    <div style="display: flex; gap: 10px;">
-                        <div class="form-group" style="flex: 1;">
-                            <label style="font-size: 11px;">Altitude (ft)</label>
+                    <div style="display:flex; gap:10px;">
+                        <div class="form-group" style="flex:1;">
+                            <label style="font-size:11px;">Altitude (ft)</label>
                             <input type="number" id="edit-alt" class="input-field" value="${p.altitude_ft || ''}">
                         </div>
-                        <div class="form-group" style="flex: 1;">
-                            <label style="font-size: 11px;">Speed (kts)</label>
+                        <div class="form-group" style="flex:1;">
+                            <label style="font-size:11px;">Speed (kts)</label>
                             <input type="number" id="edit-speed" class="input-field" value="${p.ground_speed_kts || ''}">
                         </div>
                     </div>
-                    <div style="display: flex; gap: 10px;">
-                        <div class="form-group" style="flex: 1;">
-                            <label style="font-size: 11px;">Heading (°)</label>
-                            <input type="number" id="edit-heading" class="input-field" value="${p.heading !== null ? p.heading : ''}">
+                    <div style="display:flex; gap:10px;">
+                        <div class="form-group" style="flex:1;">
+                            <label style="font-size:11px;">Heading (°)</label>
+                            <input type="number" id="edit-heading" class="input-field" value="${p.heading != null ? p.heading : ''}">
                         </div>
-                        <div class="form-group" style="flex: 1;">
-                            <label style="font-size: 11px;">Vertical Rate (fpm)</label>
+                        <div class="form-group" style="flex:1;">
+                            <label style="font-size:11px;">Vertical Rate (fpm)</label>
                             <input type="number" id="edit-vrate" class="input-field" value="${p.vertical_rate_fpm || ''}">
                         </div>
                     </div>
-                    <div class="form-group">
-                        <label style="font-size: 11px;">Report Source</label>
-                        <input type="text" class="input-field" value="${p.source ? p.source.toUpperCase() : 'N/A'}" readonly style="background: rgba(255,255,255,0.02); color: var(--text-secondary); cursor: not-allowed; font-family: var(--mono); font-size: 11px; letter-spacing: 0.5px;">
-                    </div>
-                    <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px;">
+                    <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:6px;">
                         <button type="button" class="btn-ghost" onclick="document.getElementById('edit-pos-popover').remove()">Cancel</button>
                         <button type="submit" class="btn-primary">Save Changes</button>
                     </div>
                 </form>
             </div>
         `;
-
         document.body.appendChild(overlay);
 
-        const form = document.getElementById('edit-pos-form');
-        form.onsubmit = async (e) => {
+        document.getElementById('edit-pos-form').onsubmit = async (e) => {
             e.preventDefault();
-            
-            const parseNum = (val) => val === '' ? null : parseFloat(val);
-
-            const updatedData = {
-                latitude: parseFloat(document.getElementById('edit-lat').value),
-                longitude: parseFloat(document.getElementById('edit-lon').value),
-                altitude_ft: parseNum(document.getElementById('edit-alt').value),
-                ground_speed_kts: parseNum(document.getElementById('edit-speed').value),
-                heading: parseNum(document.getElementById('edit-heading').value),
-                vertical_rate_fpm: parseNum(document.getElementById('edit-vrate').value)
-            };
-
+            const parseNum = v => v === '' ? null : parseFloat(v);
             try {
-                await API.updatePosition(posId, updatedData);
-                Utils.toast('Position report updated and flight stats recalculated.', 'success');
+                await API.updatePosition(posId, {
+                    latitude: parseFloat(document.getElementById('edit-lat').value),
+                    longitude: parseFloat(document.getElementById('edit-lon').value),
+                    altitude_ft: parseNum(document.getElementById('edit-alt').value),
+                    ground_speed_kts: parseNum(document.getElementById('edit-speed').value),
+                    heading: parseNum(document.getElementById('edit-heading').value),
+                    vertical_rate_fpm: parseNum(document.getElementById('edit-vrate').value),
+                });
+                Utils.toast('Position updated.', 'success');
                 overlay.remove();
-                
-                // Reload current flight to see recalculated stats and updated table
                 this.selectFlight(this.selectedFlightId);
             } catch (err) {
-                console.error("Failed to update position:", err);
                 Utils.toast(`Error: ${err.message}`, 'error');
             }
         };
     },
 
     async deletePosition(posId) {
-        if (!confirm("Are you sure you want to delete this position report? This will permanently remove this coordinate point from the flight path and immediately recalculate all speed, distance, and altitude statistics for this flight.")) return;
-
+        if (!confirm('Delete this position report? This permanently removes the data point and recalculates flight stats.')) return;
         try {
             await API.deletePosition(posId);
-            Utils.toast('Position report deleted and flight stats recalculated.', 'success');
-            
-            // Reload current flight to see recalculated stats and updated table
+            Utils.toast('Position deleted.', 'success');
+            this.selectedPositionIds.delete(posId);
+            this.updateBulkDeleteBtn();
             this.selectFlight(this.selectedFlightId);
         } catch (err) {
-            console.error("Failed to delete position:", err);
             Utils.toast(`Error: ${err.message}`, 'error');
         }
     },
 
-    async mergeIntoFlight() {
-        if (!this.selectedFlightId) return;
+    // ── Merge Flight ──
 
-        // Fetch flights for the same aircraft (excluding current)
-        const currentFlight = this.currentFlight;
-        if (!currentFlight) return;
+    async mergeIntoFlight() {
+        if (!this.selectedFlightId || !this.currentFlight) return;
 
         let candidates = [];
         try {
-            const all = await API.getFlights({ limit: 150 });
-            candidates = all.filter(f => f.aircraft_id === currentFlight.aircraft_id && f.id !== this.selectedFlightId);
+            const all = await API.getFlights({ limit: 200 });
+            candidates = all
+                .filter(f => f.aircraft_id === this.currentFlight.aircraft_id && f.id !== this.selectedFlightId)
+                .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
         } catch (err) {
             Utils.toast('Failed to load flights for merge', 'error');
             return;
@@ -641,60 +867,50 @@ const TelemetryAuditor = {
             return;
         }
 
-        // Sort: most recent first
-        candidates.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-
-        let optionsHtml = candidates.map(f => {
+        const optionsHtml = candidates.map(f => {
             const route = `${f.departure_iata || '???'} → ${f.arrival_iata || '???'}`;
             const label = `${f.flight_number || f.callsign || 'Unknown'} (${route}) · ${f.status} · ${Utils.formatDateShort(f.created_at)}`;
             return `<option value="${f.id}">${label}</option>`;
         }).join('');
 
+        const currentLabel = `${this.currentFlight.flight_number || this.currentFlight.callsign || 'this flight'} (${this.currentFlight.departure_iata || '???'} → ${this.currentFlight.arrival_iata || '???'})`;
+
         const overlay = document.createElement('div');
         overlay.className = 'popover-overlay';
         overlay.id = 'merge-flight-popover';
-
-        const currentLabel = `${currentFlight.flight_number || currentFlight.callsign || 'this flight'} (${currentFlight.departure_iata || '???'} → ${currentFlight.arrival_iata || '???'})`;
-
         overlay.innerHTML = `
-            <div class="modal" style="max-width: 480px; padding: 20px; animation: slideUp 0.2s ease;">
-                <h3 style="margin-bottom: 12px; font-weight: 600;">Merge Flight</h3>
-                <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 16px; line-height: 1.5;">
-                    All positions from <strong style="color: var(--text-primary);">${currentLabel}</strong> will be moved into the selected target flight, then this flight will be deleted.
-                    Use this to clean up a duplicate flight created by a restart mid-leg.
+            <div class="modal" style="max-width: 500px;">
+                <h3 style="margin-bottom:12px; font-weight:600;">Merge Flight</h3>
+                <p style="font-size:12px; color:var(--text-secondary); margin-bottom:16px; line-height:1.5;">
+                    All <strong>${this.currentPositions.length} positions</strong> from <strong style="color:var(--text-primary);">${currentLabel}</strong> will be moved into the selected target, then this flight will be deleted.
                 </p>
-                <form id="merge-flight-form" style="display: flex; flex-direction: column; gap: 16px;">
+                <form id="merge-flight-form" style="display:flex; flex-direction:column; gap:16px;">
                     <div class="form-group">
-                        <label style="font-size: 11px;">Merge positions INTO</label>
-                        <select id="merge-target-select" class="select-input" style="height: auto; padding: 8px;">
+                        <label style="font-size:11px;">Merge positions INTO</label>
+                        <select id="merge-target-select" class="input-field" style="height:auto; padding:8px;">
                             ${optionsHtml}
                         </select>
                     </div>
-                    <div style="padding: 10px; background: rgba(255,160,0,0.08); border: 1px solid rgba(255,160,0,0.3); border-radius: 6px; font-size: 11px; color: var(--text-secondary); line-height: 1.5;">
-                        This action is <strong style="color: var(--text-primary);">irreversible</strong>. The current flight record will be permanently deleted after its positions are transferred.
+                    <div style="padding:10px 12px; background:rgba(255,160,0,0.08); border:1px solid rgba(255,160,0,0.3); border-radius:6px; font-size:11px; color:var(--text-secondary); line-height:1.5;">
+                        This action is <strong style="color:var(--text-primary);">irreversible</strong>. The current flight record will be permanently deleted after positions are transferred.
                     </div>
-                    <div style="display: flex; justify-content: flex-end; gap: 8px;">
+                    <div style="display:flex; justify-content:flex-end; gap:8px;">
                         <button type="button" class="btn-ghost" onclick="document.getElementById('merge-flight-popover').remove()">Cancel</button>
-                        <button type="submit" class="btn-primary" style="background: var(--accent);">Merge & Delete</button>
+                        <button type="submit" class="btn-primary" style="background:var(--accent);">Merge &amp; Delete</button>
                     </div>
                 </form>
             </div>
         `;
-
         document.body.appendChild(overlay);
 
         document.getElementById('merge-flight-form').onsubmit = async (e) => {
             e.preventDefault();
             const targetId = document.getElementById('merge-target-select').value;
             if (!targetId) return;
-
             try {
-                // Merge current flight INTO the selected target
                 await API.mergeFlights(targetId, this.selectedFlightId);
-                Utils.toast('Flights merged successfully. Positions transferred and flight deleted.', 'success');
+                Utils.toast('Flights merged. Positions transferred.', 'success');
                 overlay.remove();
-
-                // Navigate to the target flight
                 await this.loadFlights();
                 this.selectFlight(targetId);
             } catch (err) {
@@ -703,73 +919,65 @@ const TelemetryAuditor = {
         };
     },
 
+    // ── Reassign Position ──
+
     async reassignPosition(posId) {
         const p = this.currentPositions.find(x => x.id === posId);
         if (!p) return;
 
-        // Fetch flights for the same aircraft to suggest as targets
         let targetFlights = [];
         try {
-            targetFlights = await API.getFlights({ limit: 100 });
-            // Filter flights matching the aircraft tail or ID to prioritize them
-            targetFlights = targetFlights.filter(f => f.aircraft_id === p.aircraft_id);
+            const all = await API.getFlights({ limit: 200 });
+            targetFlights = all.filter(f => f.aircraft_id === p.aircraft_id);
         } catch (err) {
-            console.warn("Failed to fetch target flights for reassignment, using all flights:", err);
+            console.warn('Failed to fetch flights for reassignment:', err);
         }
+
+        const optionsHtml = targetFlights.map(f => {
+            const route = `${f.departure_iata || '???'} → ${f.arrival_iata || '???'}`;
+            const label = `${f.flight_number || f.callsign || 'Unknown'} (${route}) — ${f.status} (${Utils.formatDateShort(f.created_at)})`;
+            return `<option value="${f.id}" ${f.id === this.selectedFlightId ? 'selected' : ''}>${label}</option>`;
+        }).join('');
 
         const overlay = document.createElement('div');
         overlay.className = 'popover-overlay';
         overlay.id = 'reassign-pos-popover';
-
-        let optionsHtml = '';
-        targetFlights.forEach(f => {
-            const routeStr = `${f.departure_iata || '???'} → ${f.arrival_iata || '???'}`;
-            const label = `${f.flight_number || f.callsign || 'Unknown'} (${routeStr}) - ${f.status} (${Utils.formatDateShort(f.created_at)})`;
-            optionsHtml += `<option value="${f.id}" ${f.id === this.selectedFlightId ? 'selected' : ''}>${label}</option>`;
-        });
-
         overlay.innerHTML = `
-            <div class="modal" style="max-width: 440px; padding: 20px; animation: slideUp 0.2s ease;">
-                <h3 style="margin-bottom: 12px; font-weight: 600;">Reassign Position Report #${p.id}</h3>
-                <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 16px; line-height: 1.4;">
-                    Move this telemetry point to a different flight. This is useful for cleaning up overlapping flights or incorrectly assigned telemetry chunks.
+            <div class="modal" style="max-width: 460px;">
+                <h3 style="margin-bottom:12px; font-weight:600;">Move Position #${p.id}</h3>
+                <p style="font-size:12px; color:var(--text-secondary); margin-bottom:16px; line-height:1.4;">
+                    Reassign this telemetry point to a different flight leg.
                 </p>
-                <form id="reassign-pos-form" style="display: flex; flex-direction: column; gap: 16px;">
+                <form id="reassign-pos-form" style="display:flex; flex-direction:column; gap:16px;">
                     <div class="form-group">
-                        <label style="font-size: 11px;">Target Flight</label>
-                        <select id="reassign-flight-select" class="input-field" style="height: auto; padding: 8px;">
-                            ${optionsHtml || '<option value="">No other flights found</option>'}
+                        <label style="font-size:11px;">Target Flight</label>
+                        <select id="reassign-flight-select" class="input-field" style="height:auto; padding:8px;">
+                            ${optionsHtml || '<option value="">No flights found</option>'}
                         </select>
                     </div>
-                    <div style="display: flex; justify-content: flex-end; gap: 8px;">
+                    <div style="display:flex; justify-content:flex-end; gap:8px;">
                         <button type="button" class="btn-ghost" onclick="document.getElementById('reassign-pos-popover').remove()">Cancel</button>
-                        <button type="submit" class="btn-primary" ${targetFlights.length === 0 ? 'disabled' : ''}>Reassign Point</button>
+                        <button type="submit" class="btn-primary" ${targetFlights.length === 0 ? 'disabled' : ''}>Move Position</button>
                     </div>
                 </form>
             </div>
         `;
-
         document.body.appendChild(overlay);
 
-        const form = document.getElementById('reassign-pos-form');
-        form.onsubmit = async (e) => {
+        document.getElementById('reassign-pos-form').onsubmit = async (e) => {
             e.preventDefault();
             const targetFlightId = document.getElementById('reassign-flight-select').value;
             if (!targetFlightId) return;
-
             try {
                 await API.updatePosition(posId, { flight_id: targetFlightId });
-                Utils.toast('Position report reassigned successfully. Stats updated for both flights.', 'success');
+                Utils.toast('Position reassigned.', 'success');
                 overlay.remove();
-                
-                // Reload current flight workspace
                 this.selectFlight(this.selectedFlightId);
             } catch (err) {
-                console.error("Failed to reassign position:", err);
                 Utils.toast(`Error: ${err.message}`, 'error');
             }
         };
-    }
+    },
 };
 
 window.TelemetryAuditor = TelemetryAuditor;

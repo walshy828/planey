@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -40,39 +40,56 @@ async def list_flights(
     db: AsyncSession = Depends(get_db),
 ):
     """List flights with optional filtering."""
-    query = select(Flight)
+    from app.services.stats_calculator import update_flight_stats_if_needed
+
+    # Subquery: position count per flight
+    pos_subq = (
+        select(Position.flight_id, func.count(Position.id).label("cnt"))
+        .group_by(Position.flight_id)
+        .subquery()
+    )
+
+    stmt = (
+        select(Flight, Aircraft.tail_number, pos_subq.c.cnt)
+        .outerjoin(Aircraft, Flight.aircraft_id == Aircraft.id)
+        .outerjoin(pos_subq, Flight.id == pos_subq.c.flight_id)
+    )
 
     if aircraft_id:
-        query = query.where(Flight.aircraft_id == aircraft_id)
+        stmt = stmt.where(Flight.aircraft_id == aircraft_id)
     if status_filter:
         statuses = [s.strip() for s in status_filter.split(",")]
-        query = query.where(Flight.status.in_(statuses))
+        stmt = stmt.where(Flight.status.in_(statuses))
     if hours:
         from sqlalchemy import or_
         cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
         cutoff_naive = cutoff.replace(tzinfo=None)
-        query = query.where(
+        stmt = stmt.where(
             or_(
                 Flight.actual_departure >= cutoff_naive,
                 Flight.scheduled_departure >= cutoff_naive
             )
         )
 
-    query = query.order_by(Flight.created_at.desc()).limit(limit).offset(offset)
+    stmt = stmt.order_by(Flight.created_at.desc()).limit(limit).offset(offset)
+    result = await db.execute(stmt)
+    rows = result.all()
 
-    result = await db.execute(query)
-    flights = result.scalars().all()
-    
     # Retroactively compute statistics for landed flights that lack them
-    from app.services.stats_calculator import update_flight_stats_if_needed
     updated = False
-    for f in flights:
-        if await update_flight_stats_if_needed(f, db):
+    for row in rows:
+        if await update_flight_stats_if_needed(row[0], db):
             updated = True
     if updated:
         await db.commit()
 
-    return [FlightResponse.model_validate(f) for f in flights]
+    return [
+        FlightResponse.model_validate(flight).model_copy(update={
+            "tail_number": tail_number,
+            "position_count": cnt or 0,
+        })
+        for flight, tail_number, cnt in rows
+    ]
 
 
 @router.get("/active", response_model=list[FlightWithPositions])

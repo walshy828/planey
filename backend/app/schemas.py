@@ -135,6 +135,8 @@ class FlightResponse(BaseModel):
     summary_stats: Optional[dict] = None
     created_at: datetime
     updated_at: datetime
+    position_count: int = 0
+    tail_number: Optional[str] = None
 
     class Config:
         from_attributes = True

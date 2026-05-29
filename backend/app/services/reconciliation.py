@@ -220,17 +220,37 @@ class ReconciliationService:
                         if json_str:
                             data = json.loads(json_str)
                             flights_map = data.get("flights", {})
-                            
-                            # Find the first 'arrived' or 'landed' flight in the activity log
+
+                            # Find the best-matching 'arrived' or 'landed' flight in the
+                            # activity log.  Match by departure time (±6 h) so we don't
+                            # accidentally pick up a historical leg from a different day.
+                            target_dep = flight.scheduled_departure or flight.actual_departure
+                            if target_dep and target_dep.tzinfo is None:
+                                target_dep = target_dep.replace(tzinfo=timezone.utc)
+
                             found_fa_flight = None
                             for k, v in flights_map.items():
                                 act_flights = v.get("activityLog", {}).get("flights", [])
                                 for f in act_flights:
                                     status = f.get("flightStatus", "").lower()
-                                    if status in ["arrived", "landed"]:
-                                        found_fa_flight = f
-                                        break
-                                if found_fa_flight: break
+                                    if status not in ["arrived", "landed"]:
+                                        continue
+                                    # Time-gate: takeoff time must be within 6 h of our
+                                    # scheduled departure to avoid matching historical legs.
+                                    if target_dep:
+                                        entry_dep_ts = (
+                                            f.get("takeoffTimes", {}).get("scheduled")
+                                            or f.get("takeoffTimes", {}).get("estimated")
+                                            or f.get("takeoffTimes", {}).get("actual")
+                                        )
+                                        if entry_dep_ts:
+                                            entry_dep = datetime.fromtimestamp(entry_dep_ts, tz=timezone.utc)
+                                            if abs((entry_dep - target_dep).total_seconds()) > 21600:
+                                                continue  # different flight leg — skip
+                                    found_fa_flight = f
+                                    break
+                                if found_fa_flight:
+                                    break
                                 
                             if found_fa_flight:
                                 logger.info(f"Found match in FA JSON with status {found_fa_flight.get('flightStatus')}")
