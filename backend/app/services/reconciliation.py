@@ -33,6 +33,21 @@ class ReconciliationService:
                 return dt.replace(tzinfo=timezone.utc)
             return dt.astimezone(timezone.utc)
 
+        # Never link positions to a scheduled flight that hasn't actually departed yet.
+        # The 12-hour backward window would otherwise sweep up current ground positions.
+        # Also guard against stale actual_departure (> 6 h before scheduled departure).
+        now = datetime.now(timezone.utc)
+        if flight.status == "scheduled" and flight.scheduled_departure:
+            sched = ensure_utc(flight.scheduled_departure)
+            if sched and sched > now:
+                actual_dep = ensure_utc(flight.actual_departure) if flight.actual_departure else None
+                if actual_dep is None or actual_dep < sched - timedelta(hours=6):
+                    logger.info(
+                        f"Skipping orphan position linkage for future scheduled flight "
+                        f"{flight.id} ({flight.flight_number}) — not yet departed"
+                    )
+                    return 0
+
         flight_start = ensure_utc(flight.actual_departure or flight.scheduled_departure or flight.created_at)
         flight_end = ensure_utc(flight.actual_arrival or flight.scheduled_arrival or datetime.now(timezone.utc))
 
@@ -123,6 +138,18 @@ class ReconciliationService:
             
         if flight.status not in ["active", "scheduled"]:
             return {"status": "skipped", "message": f"Flight {flight.id} is already {flight.status}"}
+
+        # Never attempt external reconciliation of a scheduled flight whose departure
+        # time is still in the future — it hasn't happened yet.
+        # Guard also catches cases where actual_departure is set but is stale historical
+        # data (> 6 h before the scheduled departure), which indicates bad data, not a
+        # real departure.
+        if flight.status == "scheduled" and flight.scheduled_departure:
+            sched_dep = self._ensure_tz(flight.scheduled_departure)
+            if sched_dep and sched_dep > datetime.now(timezone.utc):
+                actual_dep = self._ensure_tz(flight.actual_departure)
+                if actual_dep is None or actual_dep < sched_dep - timedelta(hours=6):
+                    return {"status": "skipped", "message": "Future scheduled flight has not departed; skipping reconciliation"}
 
         # Recency guard: never close a flight that had airborne positions in the last 10 minutes.
         # This prevents premature closure during brief ADS-B coverage gaps, which would cause
@@ -752,9 +779,30 @@ class ReconciliationService:
         logger.info(f"Reconciliation triggered for {len(open_flights)} open flights "
                     f"(skip_if_recent_minutes={skip_if_recent_minutes})")
 
+        now_utc = datetime.now(timezone.utc)
         results = []
         for flight in open_flights:
             try:
+                # Skip scheduled flights whose departure is still in the future.
+                # Also skip if actual_departure looks like stale historical data
+                # (> 6 h before the scheduled departure).
+                if flight.status == "scheduled" and flight.scheduled_departure:
+                    sched_dep = flight.scheduled_departure
+                    if sched_dep.tzinfo is None:
+                        sched_dep = sched_dep.replace(tzinfo=timezone.utc)
+                    if sched_dep > now_utc:
+                        actual_dep = flight.actual_departure
+                        if actual_dep and actual_dep.tzinfo is None:
+                            actual_dep = actual_dep.replace(tzinfo=timezone.utc)
+                        if actual_dep is None or actual_dep < sched_dep - timedelta(hours=6):
+                            results.append({
+                                "flight_id": str(flight.id),
+                                "flight_number": flight.flight_number,
+                                "status": "skipped",
+                                "message": f"Future scheduled flight (departs {sched_dep.isoformat()})",
+                            })
+                            continue
+
                 # Recency guard: skip flights with a recent airborne position
                 if skip_if_recent_minutes > 0:
                     cutoff = datetime.now(timezone.utc) - timedelta(minutes=skip_if_recent_minutes)

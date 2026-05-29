@@ -982,16 +982,19 @@ class TrackerService:
             if t_naive < lower_bound:
                 return False
 
-        # For completed/landed/cancelled flights, also enforce upper bound
-        if flight.status in ["landed", "cancelled"]:
-            arrivals = [a for a in [flight.scheduled_arrival, flight.actual_arrival] if a is not None]
-            if arrivals:
-                arr_naive = max(arrivals)
-                if arr_naive.tzinfo is not None:
-                    arr_naive = arr_naive.replace(tzinfo=None)
-                upper_bound = arr_naive + timedelta(minutes=15)
-                if t_naive > upper_bound:
-                    return False
+        # Enforce upper bound for all statuses:
+        # - landed/cancelled: tight window (arrival + 15 min)
+        # - scheduled/active: looser window (arrival + 2 h) so live positions aren't
+        #   rejected mid-flight, but far-future stray positions are still rejected
+        arrivals = [a for a in [flight.scheduled_arrival, flight.actual_arrival] if a is not None]
+        if arrivals:
+            arr_naive = max(arrivals)
+            if arr_naive.tzinfo is not None:
+                arr_naive = arr_naive.replace(tzinfo=None)
+            buffer = timedelta(minutes=15) if flight.status in ["landed", "cancelled"] else timedelta(hours=2)
+            upper_bound = arr_naive + buffer
+            if t_naive > upper_bound:
+                return False
 
         return True
 
