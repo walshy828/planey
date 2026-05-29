@@ -391,6 +391,35 @@
                     </select>
                 </div>
 
+                <!-- ntfy Notifications -->
+                <div class="form-section-divider">
+                    <span>Push Notifications (ntfy)</span>
+                </div>
+                <div class="form-group">
+                    <label for="input-ntfy-server">ntfy Server</label>
+                    <input type="text" id="input-ntfy-server" class="input-field" placeholder="https://ntfy.sh" autocomplete="off">
+                    <span class="form-hint">Leave blank to use ntfy.sh</span>
+                </div>
+                <div class="form-group">
+                    <label for="input-ntfy-topic">Topic</label>
+                    <input type="text" id="input-ntfy-topic" class="input-field" placeholder="e.g., my-plane-alerts" autocomplete="off">
+                </div>
+                <div class="form-row ntfy-events-row">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="input-ntfy-scheduled">
+                        <span>Filed</span>
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="input-ntfy-departed">
+                        <span>Departed</span>
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="input-ntfy-landed">
+                        <span>Landed</span>
+                    </label>
+                    <button type="button" class="btn-ghost btn-small" id="btn-test-ntfy" style="display:none;">Test</button>
+                </div>
+
                 <!-- Lookup Result Preview -->
                 <div id="lookup-result" class="lookup-result" style="display: none;">
                     <div class="lookup-header">

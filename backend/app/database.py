@@ -89,6 +89,12 @@ async def init_db():
                 await conn.execute(text("ALTER TABLE positions ALTER COLUMN flight_id SET NOT NULL;"))
                 # Self-healing: add ground_elevation_ft for AGL calculation
                 await conn.execute(text("ALTER TABLE positions ADD COLUMN IF NOT EXISTS ground_elevation_ft FLOAT;"))
+                # Self-healing: add ntfy notification columns to aircraft
+                await conn.execute(text("ALTER TABLE aircraft ADD COLUMN IF NOT EXISTS ntfy_server VARCHAR(500);"))
+                await conn.execute(text("ALTER TABLE aircraft ADD COLUMN IF NOT EXISTS ntfy_topic VARCHAR(200);"))
+                await conn.execute(text("ALTER TABLE aircraft ADD COLUMN IF NOT EXISTS ntfy_on_scheduled BOOLEAN NOT NULL DEFAULT false;"))
+                await conn.execute(text("ALTER TABLE aircraft ADD COLUMN IF NOT EXISTS ntfy_on_departed BOOLEAN NOT NULL DEFAULT false;"))
+                await conn.execute(text("ALTER TABLE aircraft ADD COLUMN IF NOT EXISTS ntfy_on_landed BOOLEAN NOT NULL DEFAULT false;"))
             logger.info("Database initialized successfully")
             return
         except Exception as e:

@@ -163,6 +163,13 @@ async def webhook_flight_filed(
     await reconciliation_service.reconcile_orphan_positions(new_flight, db)
 
     logger.info(f"Created new scheduled flight for {payload.tail_number} from webhook.")
+
+    from app.services import ntfy as ntfy_service
+    try:
+        await ntfy_service.notify_scheduled(aircraft, new_flight)
+    except Exception as exc:
+        logger.warning(f"ntfy notify_scheduled failed: {exc}")
+
     return new_flight
 
 
@@ -424,6 +431,12 @@ async def webhook_flight_departed(
         position_data={"on_ground": False}
     )
 
+    from app.services import ntfy as ntfy_service
+    try:
+        await ntfy_service.notify_departed(aircraft, flight)
+    except Exception as exc:
+        logger.warning(f"ntfy notify_departed failed: {exc}")
+
     # Retroactively reconcile any captured orphan positions
     from app.services.reconciliation import reconciliation_service
     await reconciliation_service.reconcile_orphan_positions(flight, db)
@@ -677,6 +690,12 @@ async def webhook_flight_arrived(
         flight_data=flight_data,
         position_data={"on_ground": True, "latitude": dest_lat, "longitude": dest_lon, "timestamp": flight.actual_arrival.isoformat()}
     )
+
+    from app.services import ntfy as ntfy_service
+    try:
+        await ntfy_service.notify_landed(aircraft, flight)
+    except Exception as exc:
+        logger.warning(f"ntfy notify_landed failed: {exc}")
 
     return flight
 

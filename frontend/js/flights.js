@@ -72,6 +72,10 @@ const Flights = {
         document.getElementById('btn-cancel-add-aircraft').addEventListener('click', () => this._hideModal('modal-add-aircraft'));
         document.getElementById('btn-confirm-add-aircraft').addEventListener('click', () => this.editingAircraftId ? this._updateAircraft() : this._addAircraft());
         document.getElementById('btn-lookup').addEventListener('click', () => this._lookupAircraft());
+        document.getElementById('btn-test-ntfy').addEventListener('click', () => this._testNtfy());
+        document.getElementById('input-ntfy-topic').addEventListener('input', (e) => {
+            document.getElementById('btn-test-ntfy').style.display = e.target.value.trim() && this.editingAircraftId ? 'inline-flex' : 'none';
+        });
 
         // Add Flight modal
         document.getElementById('btn-close-add-flight').addEventListener('click', () => this._hideModal('modal-add-flight'));
@@ -878,6 +882,11 @@ const Flights = {
             aircraft_type: document.getElementById('input-aircraft-type').value.trim() || null,
             airline: document.getElementById('input-airline').value.trim() || null,
             category: document.getElementById('input-aircraft-category').value,
+            ntfy_server: document.getElementById('input-ntfy-server').value.trim() || null,
+            ntfy_topic: document.getElementById('input-ntfy-topic').value.trim() || null,
+            ntfy_on_scheduled: document.getElementById('input-ntfy-scheduled').checked,
+            ntfy_on_departed: document.getElementById('input-ntfy-departed').checked,
+            ntfy_on_landed: document.getElementById('input-ntfy-landed').checked,
         };
 
         try {
@@ -924,6 +933,12 @@ const Flights = {
         });
         document.getElementById('input-aircraft-category').value = 'plane';
         document.getElementById('lookup-result').style.display = 'none';
+        document.getElementById('input-ntfy-server').value = '';
+        document.getElementById('input-ntfy-topic').value = '';
+        document.getElementById('input-ntfy-scheduled').checked = false;
+        document.getElementById('input-ntfy-departed').checked = false;
+        document.getElementById('input-ntfy-landed').checked = false;
+        document.getElementById('btn-test-ntfy').style.display = 'none';
     },
 
     _showAddAircraftModal() {
@@ -947,7 +962,13 @@ const Flights = {
         document.getElementById('input-aircraft-type').value = ac.aircraft_type || '';
         document.getElementById('input-airline').value = ac.airline || '';
         document.getElementById('input-aircraft-category').value = ac.category || 'plane';
-        
+        document.getElementById('input-ntfy-server').value = ac.ntfy_server || '';
+        document.getElementById('input-ntfy-topic').value = ac.ntfy_topic || '';
+        document.getElementById('input-ntfy-scheduled').checked = ac.ntfy_on_scheduled || false;
+        document.getElementById('input-ntfy-departed').checked = ac.ntfy_on_departed || false;
+        document.getElementById('input-ntfy-landed').checked = ac.ntfy_on_landed || false;
+        document.getElementById('btn-test-ntfy').style.display = ac.ntfy_topic ? 'inline-flex' : 'none';
+
         this._showModal('modal-add-aircraft');
     },
 
@@ -1007,6 +1028,11 @@ const Flights = {
             aircraft_type: document.getElementById('input-aircraft-type').value.trim() || null,
             airline: document.getElementById('input-airline').value.trim() || null,
             category: document.getElementById('input-aircraft-category').value,
+            ntfy_server: document.getElementById('input-ntfy-server').value.trim() || null,
+            ntfy_topic: document.getElementById('input-ntfy-topic').value.trim() || null,
+            ntfy_on_scheduled: document.getElementById('input-ntfy-scheduled').checked,
+            ntfy_on_departed: document.getElementById('input-ntfy-departed').checked,
+            ntfy_on_landed: document.getElementById('input-ntfy-landed').checked,
         };
 
         try {
@@ -1015,6 +1041,23 @@ const Flights = {
             this._hideModal('modal-add-aircraft');
             await this.loadAircraft();
         } catch (err) { Utils.toast(err.message, 'error'); }
+    },
+
+    async _testNtfy() {
+        const id = this.editingAircraftId;
+        if (!id) { Utils.toast('Save the aircraft first', 'warning'); return; }
+        const btn = document.getElementById('btn-test-ntfy');
+        btn.disabled = true;
+        btn.textContent = '...';
+        try {
+            await fetch(`/api/aircraft/${id}/test_ntfy`, { method: 'POST' });
+            Utils.toast('Test notification sent', 'success');
+        } catch (err) {
+            Utils.toast('Failed to send test notification', 'error');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Test';
+        }
     },
 
     _showAddFlightModal(aircraftId) {

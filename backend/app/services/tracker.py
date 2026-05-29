@@ -26,6 +26,7 @@ from app.services.elevation import get_elevation_ft, get_elevations_ft
 from app.services.geocoder import geocoder
 from app.services.home_assistant import ha_service
 from app.services.websocket import ws_manager
+from app.services import ntfy as ntfy_service
 
 logger = logging.getLogger(__name__)
 
@@ -914,6 +915,11 @@ class TrackerService:
                     "new_status": "landed",
                     "summary_stats": flight.summary_stats,
                 })
+
+                try:
+                    await ntfy_service.notify_landed(aircraft, flight)
+                except Exception as exc:
+                    logger.warning(f"ntfy notify_landed failed: {exc}")
         else:
             # Aircraft is airborne — reset any pending landing confirmation
             if flight_key in self._landing_states:
@@ -929,6 +935,11 @@ class TrackerService:
                 flight.status = "active"
                 flight.actual_departure = datetime.now(timezone.utc)
                 logger.info(f"Flight {flight.flight_number} has departed")
+
+                try:
+                    await ntfy_service.notify_departed(aircraft, flight)
+                except Exception as exc:
+                    logger.warning(f"ntfy notify_departed failed: {exc}")
 
                 await ws_manager.broadcast({
                     "type": "flight_status",

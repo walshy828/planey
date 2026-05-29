@@ -23,6 +23,11 @@ class AircraftCreate(BaseModel):
     airline: Optional[str] = Field(None, max_length=100)
     display_name: Optional[str] = Field(None, max_length=200)
     category: Optional[str] = Field("plane", description="Category: plane or helicopter")
+    ntfy_server: Optional[str] = Field(None, max_length=500)
+    ntfy_topic: Optional[str] = Field(None, max_length=200)
+    ntfy_on_scheduled: bool = False
+    ntfy_on_departed: bool = False
+    ntfy_on_landed: bool = False
 
 
 class AircraftUpdate(BaseModel):
@@ -34,6 +39,11 @@ class AircraftUpdate(BaseModel):
     display_name: Optional[str] = Field(None, max_length=200)
     category: Optional[str] = Field(None, description="Category: plane or helicopter")
     active: Optional[bool] = None
+    ntfy_server: Optional[str] = Field(None, max_length=500)
+    ntfy_topic: Optional[str] = Field(None, max_length=200)
+    ntfy_on_scheduled: Optional[bool] = None
+    ntfy_on_departed: Optional[bool] = None
+    ntfy_on_landed: Optional[bool] = None
 
 
 class AircraftResponse(BaseModel):
@@ -47,6 +57,11 @@ class AircraftResponse(BaseModel):
     category: str
     photo_url: Optional[str] = None
     active: bool
+    ntfy_server: Optional[str] = None
+    ntfy_topic: Optional[str] = None
+    ntfy_on_scheduled: bool = False
+    ntfy_on_departed: bool = False
+    ntfy_on_landed: bool = False
     created_at: datetime
     updated_at: datetime
 

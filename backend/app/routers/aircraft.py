@@ -134,6 +134,11 @@ async def add_aircraft(
         category=aircraft.category or "plane",
         photo_url=photo_url,
         active=True,
+        ntfy_server=aircraft.ntfy_server or None,
+        ntfy_topic=aircraft.ntfy_topic or None,
+        ntfy_on_scheduled=aircraft.ntfy_on_scheduled,
+        ntfy_on_departed=aircraft.ntfy_on_departed,
+        ntfy_on_landed=aircraft.ntfy_on_landed,
     )
     db.add(new_aircraft)
     await db.flush()
@@ -416,6 +421,28 @@ async def sync_aircraft_from_flightaware(
     except Exception as e:
         logger.error(f"FlightAware sync failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{aircraft_id}/test_ntfy", status_code=status.HTTP_200_OK)
+async def test_ntfy_notification(
+    aircraft_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Send a test ntfy notification for the given aircraft."""
+    result = await db.execute(select(Aircraft).where(Aircraft.id == aircraft_id))
+    aircraft = result.scalars().first()
+    if not aircraft:
+        raise HTTPException(status_code=404, detail="Aircraft not found")
+    if not aircraft.ntfy_topic:
+        raise HTTPException(status_code=400, detail="No ntfy topic configured for this aircraft")
+
+    from app.services.ntfy import send_test
+    await send_test(
+        server=aircraft.ntfy_server or "",
+        topic=aircraft.ntfy_topic,
+        tail_number=aircraft.tail_number,
+    )
+    return {"status": "sent"}
 
 
 @router.post("/{aircraft_id}/poll", response_model=Optional[PositionResponse])

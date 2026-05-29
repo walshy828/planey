@@ -65,6 +65,13 @@ class Aircraft(Base):
     category: Mapped[str] = mapped_column(String(50), default="plane", server_default="plane")
     photo_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # ntfy push notification settings
+    ntfy_server: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    ntfy_topic: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    ntfy_on_scheduled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    ntfy_on_departed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    ntfy_on_landed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow
     )
