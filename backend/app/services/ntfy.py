@@ -18,17 +18,17 @@ _DEFAULT_SERVER = "https://ntfy.sh"
 
 
 async def _send(server: str, topic: str, title: str, message: str, tags: str = "") -> None:
-    url = f"{server.rstrip('/')}/{topic}"
-    headers: dict[str, str] = {"Title": title}
+    url = f"{server.rstrip('/')}/"
+    payload: dict = {"topic": topic, "title": title, "message": message}
     if tags:
-        headers["Tags"] = tags
+        payload["tags"] = tags.split(",")
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(url, content=message.encode(), headers=headers)
+            resp = await client.post(url, json=payload)
             resp.raise_for_status()
-            logger.info(f"ntfy notification sent to {url}: {title!r}")
+            logger.info(f"ntfy notification sent to {server} topic={topic!r}: {title!r}")
     except Exception as exc:
-        logger.warning(f"ntfy notification failed for {url}: {exc}")
+        logger.warning(f"ntfy notification failed for {server}/{topic}: {exc}")
 
 
 def _route(flight: Flight) -> str:
