@@ -116,14 +116,14 @@ class TrackerService:
                 continue
 
             result.append({
-                "fa_flight_id": None,  # scraper provides no stable ID
+                "fa_flight_id": f.get("fa_flight_id"),
                 "flight_number": f.get("flight_number"),
                 "callsign": f.get("flight_number"),
                 "departure_iata": f.get("origin_code"),
-                "departure_icao": None,
+                "departure_icao": f.get("origin_icao"),
                 "departure_name": f.get("origin_name"),
                 "arrival_iata": f.get("destination_code"),
-                "arrival_icao": None,
+                "arrival_icao": f.get("destination_icao"),
                 "arrival_name": f.get("destination_name"),
                 "scheduled_departure": dep,
                 "scheduled_arrival": arr,

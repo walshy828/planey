@@ -57,39 +57,47 @@ class GeocoderService:
             logger.error(f"Geocoding failed for {lat},{lon}: {e}")
             return "Unknown"
 
-    async def get_airport_coordinates(self, iata: str) -> Optional[tuple[float, float]]:
-        """Attempt to find coordinates for an airport IATA code."""
-        if not iata:
+    async def get_airport_coordinates(self, code: str) -> Optional[tuple[float, float]]:
+        """
+        Attempt to find coordinates for an airport by IATA or ICAO code.
+        Search order: aeroway tag → airport name suffix → ICAO lookup (for K-prefix codes).
+        Returns None if no reliable aeroway result is found.
+        """
+        if not code:
             return None
-        iata = iata.strip().upper()
+        code = code.strip().upper()
         headers = {'User-Agent': 'Planey Flight Tracker'}
 
-        # Strategy 1: Search by raw code first and look for class 'aeroway'
-        try:
-            url = f"https://nominatim.openstreetmap.org/search?q={iata}&format=json&limit=5"
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(url, headers=headers)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    for item in data:
-                        if item.get('class') == 'aeroway':
-                            return float(item['lat']), float(item['lon'])
-        except Exception as e:
-            logger.error(f"Failed to geocode airport {iata} with raw search: {e}")
+        async def _search(query: str) -> Optional[tuple[float, float]]:
+            try:
+                url = f"https://nominatim.openstreetmap.org/search?q={query}&format=json&limit=5"
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    resp = await client.get(url, headers=headers)
+                    if resp.status_code == 200:
+                        for item in resp.json():
+                            if item.get('class') == 'aeroway':
+                                return float(item['lat']), float(item['lon'])
+            except Exception as e:
+                logger.error(f"Geocode search failed for '{query}': {e}")
+            return None
 
-        # Strategy 2: Fallback to searching with "+airport" suffix and look for class 'aeroway'
-        try:
-            url = f"https://nominatim.openstreetmap.org/search?q={iata}+airport&format=json&limit=5"
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(url, headers=headers)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    for item in data:
-                        if item.get('class') == 'aeroway':
-                            return float(item['lat']), float(item['lon'])
-        except Exception as e:
-            logger.error(f"Failed to geocode airport {iata} with suffix search: {e}")
+        # Strategy 1: raw code (works for well-known IATA codes)
+        result = await _search(code)
+        if result:
+            return result
 
+        # Strategy 2: "<code> airport" suffix
+        result = await _search(f"{code} airport")
+        if result:
+            return result
+
+        # Strategy 3: for US ICAO codes (K + 3 chars), also try the 3-letter suffix alone
+        if len(code) == 4 and code.startswith('K'):
+            result = await _search(f"{code[1:]} airport")
+            if result:
+                return result
+
+        logger.warning(f"Could not resolve airport coordinates for '{code}'")
         return None
 
 # Singleton instance

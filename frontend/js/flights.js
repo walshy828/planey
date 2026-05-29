@@ -672,11 +672,14 @@ const Flights = {
 
             // Duration badge for route arrow area
             let durationBadge = '';
-            if (f.summary_stats?.duration_seconds > 0) {
+            if (f.status === 'landed' && f.summary_stats?.duration_seconds > 0) {
                 durationBadge = `<span class="fl-duration-badge">${Utils.formatDuration(f.summary_stats.duration_seconds)}</span>`;
             } else if (f.actual_departure && f.actual_arrival) {
                 const s = (new Date(f.actual_arrival) - new Date(f.actual_departure)) / 1000;
                 if (s > 60) durationBadge = `<span class="fl-duration-badge">${Utils.formatDuration(s)}</span>`;
+            } else if (f.scheduled_departure && f.scheduled_arrival) {
+                const s = (new Date(f.scheduled_arrival) - new Date(f.scheduled_departure)) / 1000;
+                if (s > 60) durationBadge = `<span class="fl-duration-badge">~${Utils.formatDuration(s)}</span>`;
             }
 
             // Time row
@@ -701,9 +704,9 @@ const Flights = {
                 if (airborne) timeHtml += `<span class="fl-time-airborne">● ${airborne} airborne</span>`;
             }
 
-            // Stats row (compact, single line)
+            // Stats row — only meaningful for landed flights with real position data
             let statsHtml = '';
-            if (f.summary_stats) {
+            if (f.status === 'landed' && f.summary_stats) {
                 const s = f.summary_stats;
                 const parts = [];
                 if (s.duration_seconds > 0) parts.push(Utils.formatDuration(s.duration_seconds));

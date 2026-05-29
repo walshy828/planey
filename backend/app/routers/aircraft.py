@@ -282,94 +282,104 @@ async def sync_aircraft_from_flightaware(
 
         from app.routers.webhooks import normalize_airport_code
 
+        now = datetime.now(timezone.utc)
+        raw_count = len(flights_data)
+
+        # Only upsert scheduled or currently-active flights; historical landed
+        # flights in the activityLog are ignored here (they're tracked by OpenSky).
+        flights_data = [
+            f for f in flights_data
+            if f.get("status") == "active"
+            or (
+                f.get("status") == "scheduled"
+                and isinstance(f.get("departure_time"), datetime)
+                and f["departure_time"] > now
+            )
+        ]
+
         added_count = 0
         updated_count = 0
         synced_flights = []
         for f_data in flights_data:
             f_num = f_data["flight_number"]
+            fa_id = f_data.get("fa_flight_id")
             orig_code = normalize_airport_code(f_data.get("origin_code"))
             dest_code = normalize_airport_code(f_data.get("destination_code"))
-
-            # Build query to search for existing flight
-            # Match either:
-            # 1. Any scheduled or active flight with this flight number
-            # 2. OR a landed flight that matches the departure time window (within 12 hours)
             dep_time = f_data.get("departure_time")
-            query = select(Flight).where(
-                Flight.aircraft_id == aircraft.id,
-                Flight.flight_number == f_num
-            )
-            
-            if isinstance(dep_time, datetime):
-                # Ensure tz-aware
-                if dep_time.tzinfo is None:
-                    dep_time = dep_time.replace(tzinfo=timezone.utc)
-                else:
-                    dep_time = dep_time.astimezone(timezone.utc)
-                
-                query = query.where(
-                    Flight.status.in_(["scheduled", "active"]) |
-                    (
-                        (Flight.status == "landed") &
-                        (
-                            (Flight.actual_departure.between(dep_time - timedelta(hours=12), dep_time + timedelta(hours=12))) |
-                            (Flight.scheduled_departure.between(dep_time - timedelta(hours=12), dep_time + timedelta(hours=12)))
-                        )
+            if isinstance(dep_time, datetime) and dep_time.tzinfo is None:
+                dep_time = dep_time.replace(tzinfo=timezone.utc)
+
+            # Match priority: fa_flight_id → departure time window (±2 h)
+            flight = None
+            if fa_id:
+                res = await db.execute(
+                    select(Flight).where(
+                        Flight.aircraft_id == aircraft.id,
+                        Flight.fa_flight_id == fa_id,
                     )
                 )
-            else:
-                query = query.where(Flight.status.in_(["scheduled", "active"]))
+                flight = res.scalars().first()
 
-            existing = await db.execute(query)
-            flight = existing.scalars().first()
+            if not flight and isinstance(dep_time, datetime):
+                window = timedelta(hours=2)
+                res = await db.execute(
+                    select(Flight).where(
+                        Flight.aircraft_id == aircraft.id,
+                        Flight.status.in_(["scheduled", "active"]),
+                        Flight.scheduled_departure.between(dep_time - window, dep_time + window),
+                    )
+                )
+                flight = res.scalars().first()
 
             if flight:
-                # Update existing flight with more info
-                logger.info(f"Updating existing flight {f_num} with new data from FA")
-                if f_data.get("origin_name"): 
+                logger.info(f"Updating existing flight {f_num} ({flight.id}) with new data from FA")
+                if fa_id and not flight.fa_flight_id:
+                    flight.fa_flight_id = fa_id
+                if f_data.get("origin_name"):
                     flight.departure_name = f_data["origin_name"]
-                    logger.info(f"  - Setting departure_name: {f_data['origin_name']}")
-                if f_data.get("destination_name"): 
+                if f_data.get("destination_name"):
                     flight.arrival_name = f_data["destination_name"]
-                    logger.info(f"  - Setting arrival_name: {f_data['destination_name']}")
-                if orig_code: flight.departure_iata = orig_code
-                if dest_code: flight.arrival_iata = dest_code
-                
-                # Times
-                if f_data.get("departure_time") and isinstance(f_data["departure_time"], datetime):
-                    if f_data["status"] in ["active", "landed"]:
-                        flight.actual_departure = f_data["departure_time"]
-                        logger.info(f"  - Setting actual_departure: {f_data['departure_time']}")
+                if orig_code:
+                    flight.departure_iata = orig_code
+                if f_data.get("origin_icao"):
+                    flight.departure_icao = f_data["origin_icao"]
+                if dest_code:
+                    flight.arrival_iata = dest_code
+                if f_data.get("destination_icao"):
+                    flight.arrival_icao = f_data["destination_icao"]
+                if isinstance(dep_time, datetime):
+                    if f_data["status"] == "active":
+                        flight.actual_departure = dep_time
                     else:
-                        flight.scheduled_departure = f_data["departure_time"]
-                        logger.info(f"  - Setting scheduled_departure: {f_data['departure_time']}")
-                
-                if f_data.get("arrival_time") and isinstance(f_data["arrival_time"], datetime):
-                    if f_data["status"] == "landed":
-                        flight.actual_arrival = f_data["arrival_time"]
-                        logger.info(f"  - Setting actual_arrival: {f_data['arrival_time']}")
-                    else:
-                        # For active/scheduled flights, arrival is an estimate
-                        flight.scheduled_arrival = f_data["arrival_time"]
-                        logger.info(f"  - Setting scheduled_arrival: {f_data['arrival_time']}")
-                
-                flight.status = f_data["status"]
+                        flight.scheduled_departure = dep_time
+                arr_time = f_data.get("arrival_time")
+                if isinstance(arr_time, datetime):
+                    flight.scheduled_arrival = arr_time
+                # Only advance status (scheduled → active), never regress to landed here
+                if f_data["status"] == "active" and flight.status == "scheduled":
+                    flight.status = "active"
                 updated_count += 1
                 synced_flights.append(flight)
                 continue
 
-            # Add new flight
+            # Insert new upcoming / active flight
+            is_active = f_data["status"] == "active"
+            dep_dt = dep_time if isinstance(dep_time, datetime) else None
+            arr_dt = f_data.get("arrival_time") if isinstance(f_data.get("arrival_time"), datetime) else None
             new_f = Flight(
                 aircraft_id=aircraft.id,
+                fa_flight_id=fa_id,
                 flight_number=f_num,
                 departure_iata=orig_code,
+                departure_icao=f_data.get("origin_icao"),
                 departure_name=f_data.get("origin_name"),
                 arrival_iata=dest_code,
+                arrival_icao=f_data.get("destination_icao"),
                 arrival_name=f_data.get("destination_name"),
                 status=f_data["status"],
-                scheduled_departure=f_data["departure_time"] if isinstance(f_data.get("departure_time"), datetime) and f_data["status"] != "active" else None,
-                actual_departure=f_data["departure_time"] if isinstance(f_data.get("departure_time"), datetime) and f_data["status"] == "active" else None,
-                scheduled_arrival=f_data["arrival_time"] if isinstance(f_data.get("arrival_time"), datetime) else None,
+                scheduled_departure=dep_dt if not is_active else None,
+                actual_departure=dep_dt if is_active else None,
+                scheduled_arrival=arr_dt,
             )
             db.add(new_f)
             added_count += 1
@@ -394,11 +404,14 @@ async def sync_aircraft_from_flightaware(
         except Exception as e:
             logger.error(f"Failed to update tracking interval on FA sync: {e}")
 
+        total_synced = added_count + updated_count
         return {
             "status": "success",
-            "message": f"Synced {added_count} new flights",
-            "count": added_count,
-            "raw_count": len(flights_data)
+            "message": f"Synced {total_synced} flights ({added_count} new, {updated_count} updated)",
+            "count": total_synced,
+            "added": added_count,
+            "updated": updated_count,
+            "raw_count": raw_count,
         }
     except Exception as e:
         logger.error(f"FlightAware sync failed: {e}")
