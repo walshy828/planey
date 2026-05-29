@@ -90,15 +90,22 @@ class TrackerService:
             dep = f.get("departure_time")
             arr = f.get("arrival_time")
 
-            # Scraper may return raw strings or already-parsed datetimes
+            # Scraper may return raw strings or already-parsed datetimes.
+            # Reject tz-naive datetimes rather than wrongly treating them as UTC.
             def _coerce(val):
                 if val is None:
                     return None
                 if isinstance(val, datetime):
-                    return val if val.tzinfo else val.replace(tzinfo=timezone.utc)
+                    if val.tzinfo is None:
+                        logger.warning(f"Scraper returned tz-naive datetime ({val}); skipping")
+                        return None
+                    return val
                 try:
                     dt = dateutil.parser.parse(str(val))
-                    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+                    if dt.tzinfo is None:
+                        logger.warning(f"Scraper returned tz-naive time string ({val}); skipping")
+                        return None
+                    return dt
                 except Exception:
                     return None
 

@@ -74,8 +74,14 @@ class FlightAwareClient:
             if any(s in status for s in ["en route", "arrived", "landed", "cancelled", "diverted"]):
                 continue
 
-            sched_dep = _parse_aeroapi_dt(f.get("scheduled_out") or f.get("scheduled_off"))
-            sched_arr = _parse_aeroapi_dt(f.get("scheduled_in") or f.get("scheduled_on"))
+            sched_dep = _parse_aeroapi_dt(
+                f.get("scheduled_out") or f.get("estimated_out")
+                or f.get("scheduled_off") or f.get("estimated_off")
+            )
+            sched_arr = _parse_aeroapi_dt(
+                f.get("scheduled_in") or f.get("estimated_in")
+                or f.get("scheduled_on") or f.get("estimated_on")
+            )
 
             # Only include future flights
             if not sched_dep or sched_dep <= now:

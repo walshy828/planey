@@ -162,11 +162,35 @@ class FlightAwareScraper:
         tables = soup.find_all("table")
         logger.info(f"FlightAware: Found {len(tables)} tables on page")
         
+        TZ_ABBREVS = {
+            "EST": tz.gettz("America/New_York"),
+            "EDT": tz.gettz("America/New_York"),
+            "CST": tz.gettz("America/Chicago"),
+            "CDT": tz.gettz("America/Chicago"),
+            "MST": tz.gettz("America/Denver"),
+            "MDT": tz.gettz("America/Denver"),
+            "PST": tz.gettz("America/Los_Angeles"),
+            "PDT": tz.gettz("America/Los_Angeles"),
+            "AKST": tz.gettz("America/Anchorage"),
+            "AKDT": tz.gettz("America/Anchorage"),
+            "HST": tz.gettz("Pacific/Honolulu"),
+        }
+
         for table in tables:
-            headers = [th.text.strip().lower() for th in table.find_all("th")]
+            header_els = table.find_all("th")
+            headers = [th.text.strip().lower() for th in header_els]
             logger.info(f"FlightAware: Table headers found: {headers}")
             if not any(h in headers for h in ["ident", "flight", "origin", "destination", "departure", "arrival"]):
                 continue
+
+            # Try to extract a timezone from the header row text (e.g. "Departure (EDT)")
+            header_text = " ".join(th.text for th in header_els).upper()
+            table_tz = None
+            for abbrev, tzobj in TZ_ABBREVS.items():
+                if abbrev in header_text:
+                    table_tz = tzobj
+                    logger.info(f"FlightAware: Detected table timezone {abbrev}")
+                    break
 
             logger.info(f"FlightAware: Processing flight table with headers: {headers}")
             rows = table.find_all("tr")[1:]
@@ -179,7 +203,7 @@ class FlightAwareScraper:
                     row_text = row.get_text(strip=True)
                     logger.debug(f"FlightAware: Parsing row: {row_text[:100]}...")
                     status_text = cols[0].text.strip() # Usually contains status like 'En Route' or 'Scheduled'
-                    
+
                     flight_data = {
                         "flight_number": cols[0].text.strip(),
                         "aircraft_type": cols[1].text.strip() if len(cols) > 1 else None,
@@ -189,7 +213,7 @@ class FlightAwareScraper:
                         "arrival_time": cols[5].text.strip() if len(cols) > 5 else None,
                         "status": "scheduled"
                     }
-                    
+
                     # Check if this row is actually 'En Route' or 'Arrived'
                     if "En Route" in row.text or "In Air" in row.text:
                         flight_data["status"] = "active"
@@ -207,15 +231,21 @@ class FlightAwareScraper:
                             flight_data[f"{key}_name"] = flight_data[raw_key]
                             flight_data[f"{key}_code"] = None
 
-                    # Parse times if possible
+                    # Parse times — FA tables show local airport time; preserve tz if found
                     for key in ["departure_time", "arrival_time"]:
                         if flight_data[key]:
                             try:
-                                # FlightAware table format: 'Thu 02:56PM'
-                                # We assume current year as FA doesn't show it in the small table
-                                parsed = dateutil.parser.parse(flight_data[key])
-                                if parsed.year == 1900: # default
+                                # FlightAware table format: 'Thu 02:56PM' (often no tz suffix)
+                                parsed = dateutil.parser.parse(
+                                    flight_data[key], tzinfos=TZ_ABBREVS
+                                )
+                                if parsed.year == 1900:
                                     parsed = parsed.replace(year=datetime.now().year)
+                                # If still naive and we detected a table-level tz, apply it
+                                if parsed.tzinfo is None and table_tz is not None:
+                                    parsed = parsed.replace(tzinfo=table_tz)
+                                if parsed.tzinfo is not None:
+                                    parsed = parsed.astimezone(tz.UTC)
                                 flight_data[key] = parsed
                             except:
                                 pass
