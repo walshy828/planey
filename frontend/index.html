@@ -220,6 +220,12 @@
                         <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
                     </svg>
                 </button>
+                <button id="btn-toggle-pois" class="btn-icon map-btn active" data-tooltip="Show/hide pins" title="Toggle map pins">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path>
+                        <circle cx="12" cy="10" r="3"></circle>
+                    </svg>
+                </button>
                 <button id="btn-toggle-airspace" class="btn-icon map-btn" data-tooltip="Airspace overlay" title="Toggle airspace &amp; navaid overlays" style="display:none;">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="12" cy="12" r="10"/>
@@ -506,6 +512,51 @@
             <div class="modal-footer">
                 <button class="btn-ghost" id="btn-cancel-add-flight">Cancel</button>
                 <button class="btn-primary" id="btn-confirm-add-flight">Add Flight</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================================================================== -->
+    <!-- POI (Map Pin) Modal                                                 -->
+    <!-- ================================================================== -->
+    <div class="modal-overlay" id="modal-poi" style="display: none;">
+        <div class="modal modal-poi">
+            <div class="modal-header">
+                <h2 id="modal-poi-title">Add Pin</h2>
+                <button class="btn-icon" id="btn-close-poi">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="input-poi-name">Pin Name</label>
+                    <input type="text" id="input-poi-name" class="input-field" placeholder="e.g., Home Airport" autocomplete="off">
+                </div>
+                <div class="form-group">
+                    <label>Icon</label>
+                    <div class="poi-icon-grid" id="poi-icon-grid"></div>
+                </div>
+                <div class="form-group">
+                    <label>Color</label>
+                    <div class="poi-color-swatches" id="poi-color-swatches"></div>
+                </div>
+                <div class="form-group">
+                    <label for="input-poi-notes">Notes <span style="color:var(--text-muted);font-weight:400;">(optional)</span></label>
+                    <input type="text" id="input-poi-notes" class="input-field" placeholder="Any notes about this location" autocomplete="off">
+                </div>
+                <div class="poi-coords-hint">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity:0.5;flex-shrink:0">
+                        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>
+                    </svg>
+                    <span id="poi-coords-display"></span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-ghost" id="btn-cancel-poi">Cancel</button>
+                <button class="btn-primary" id="btn-confirm-poi">Add Pin</button>
             </div>
         </div>
     </div>
@@ -935,6 +986,7 @@
     <script src="/js/timeline.js?v=8"></script>
     <script src="/js/flights.js?v=7"></script>
     <script src="/js/auditor.js?v=8"></script>
+    <script src="/js/pois.js?v=1"></script>
     <script src="/js/app.js?v=8"></script>
 </body>
 </html>

@@ -218,6 +218,18 @@ async def add_flight(
         status=flight.status or "scheduled",
     )
     db.add(new_flight)
+
+    # Geocode airport coordinates so the map can draw route lines
+    from app.services.geocoder import geocoder
+    if departure_iata:
+        dep_coords = await geocoder.get_airport_coordinates(departure_iata)
+        if dep_coords:
+            new_flight.departure_lat, new_flight.departure_lon = dep_coords
+    if arrival_iata:
+        arr_coords = await geocoder.get_airport_coordinates(arrival_iata)
+        if arr_coords:
+            new_flight.arrival_lat, new_flight.arrival_lon = arr_coords
+
     await db.flush()
     await db.refresh(new_flight)
 
@@ -394,3 +406,38 @@ async def get_flight_history(
     )
     history = history_result.scalars().all()
     return [FlightChangeHistoryResponse.model_validate(h) for h in history]
+
+
+@router.post("/{flight_id}/geocode-airports", response_model=FlightResponse)
+async def geocode_flight_airports(
+    flight_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Fill in missing arrival/departure airport coordinates via Nominatim geocoding."""
+    result = await db.execute(select(Flight).where(Flight.id == flight_id))
+    flight = result.scalars().first()
+    if not flight:
+        raise HTTPException(status_code=404, detail="Flight not found")
+
+    from app.services.geocoder import geocoder
+    changed = False
+
+    if flight.arrival_iata and not (flight.arrival_lat and flight.arrival_lon):
+        coords = await geocoder.get_airport_coordinates(flight.arrival_iata)
+        if coords:
+            flight.arrival_lat, flight.arrival_lon = coords
+            changed = True
+            logger.info(f"Geocoded arrival {flight.arrival_iata} → {coords} for flight {flight_id}")
+
+    if flight.departure_iata and not (flight.departure_lat and flight.departure_lon):
+        coords = await geocoder.get_airport_coordinates(flight.departure_iata)
+        if coords:
+            flight.departure_lat, flight.departure_lon = coords
+            changed = True
+            logger.info(f"Geocoded departure {flight.departure_iata} → {coords} for flight {flight_id}")
+
+    if changed:
+        await db.commit()
+        await db.refresh(flight)
+
+    return FlightResponse.model_validate(flight)

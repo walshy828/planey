@@ -2306,3 +2306,181 @@ input:checked + .slider:before {
     .map-btn[data-tooltip]::after { display: none; }
 }
 
+/* ── Points of Interest (POI) ─────────────────────────────────────────────── */
+
+/* Map pin marker */
+.poi-marker-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    pointer-events: none;
+    filter: drop-shadow(0 2px 6px rgba(0,0,0,0.55));
+}
+
+.poi-marker-dot {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 2.5px solid rgba(0,0,0,0.35);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 15px;
+    line-height: 1;
+    pointer-events: auto;
+    cursor: pointer;
+    transition: transform 0.15s ease;
+}
+
+.poi-marker-dot:hover { transform: scale(1.1); }
+
+.poi-marker-emoji { display: block; line-height: 1; }
+
+.poi-marker-tail {
+    width: 0;
+    height: 0;
+    border-left: 7px solid transparent;
+    border-right: 7px solid transparent;
+    border-top: 10px solid currentColor;
+    margin-top: -2px;
+}
+
+/* Leaflet popup override for POIs */
+.poi-popup-wrap .leaflet-popup-content-wrapper {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+    color: var(--text-primary);
+    padding: 0;
+}
+
+.poi-popup-wrap .leaflet-popup-tip-container .leaflet-popup-tip {
+    background: var(--bg-elevated);
+}
+
+.poi-popup-wrap .leaflet-popup-content { margin: 0; }
+
+.poi-popup {
+    padding: 12px 14px;
+}
+
+.poi-popup-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 5px;
+}
+
+.poi-popup-icon { font-size: 20px; line-height: 1; flex-shrink: 0; }
+
+.poi-popup-name {
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--text-primary);
+    line-height: 1.3;
+}
+
+.poi-popup-notes {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 5px;
+    line-height: 1.4;
+}
+
+.poi-popup-coords {
+    font-size: 10px;
+    font-family: var(--mono);
+    color: var(--text-muted);
+    margin-bottom: 10px;
+}
+
+.poi-popup-actions { display: flex; gap: 6px; }
+
+.btn-poi-delete { color: var(--red) !important; }
+.btn-poi-delete:hover { background: rgba(255,82,82,0.12) !important; border-color: rgba(255,82,82,0.35) !important; }
+
+/* Modal size constraint */
+.modal-poi { max-width: 400px; }
+
+/* Icon picker grid */
+.poi-icon-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.poi-icon-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    padding: 9px 4px 7px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: background var(--transition), border-color var(--transition);
+    background: var(--bg-surface);
+    user-select: none;
+}
+
+.poi-icon-cell:hover { background: var(--bg-elevated); border-color: rgba(255,255,255,0.14); }
+
+.poi-icon-cell.selected {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+}
+
+.poi-icon-emoji { font-size: 20px; line-height: 1; }
+
+.poi-icon-label {
+    font-size: 9px;
+    color: var(--text-muted);
+    text-align: center;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+}
+
+/* Color swatches */
+.poi-color-swatches {
+    display: flex;
+    gap: 8px;
+    margin-top: 6px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.poi-color-swatch {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    cursor: pointer;
+    border: 2px solid transparent;
+    transition: transform var(--transition), border-color var(--transition), box-shadow var(--transition);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.35);
+}
+
+.poi-color-swatch:hover { transform: scale(1.15); }
+
+.poi-color-swatch.selected {
+    border-color: var(--text-primary);
+    transform: scale(1.1);
+    box-shadow: 0 0 0 3px rgba(255,255,255,0.15);
+}
+
+/* Coordinates hint beneath the form */
+.poi-coords-hint {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    font-family: var(--mono);
+    color: var(--text-muted);
+    margin-top: 12px;
+    padding: 6px 9px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+}
+

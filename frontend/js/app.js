@@ -13,6 +13,7 @@ const App = {
 
         // Initialize components
         await FlightMap.init();
+        POIs.init();
         Timeline.init();
         Flights.init();
 

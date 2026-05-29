@@ -12,7 +12,9 @@ const Flights = {
     currentFilter: 'all',
     aircraftFilter: 'all',
     aircraftSort: 'status',
-    _openDrawers: new Set(), // aircraftIds with open flight drawers
+    _openDrawers: new Set(),
+    _geocodingInProgress: new Set(), // flight IDs currently being geocoded
+    _geocodeAttempted: new Set(),    // flight IDs we've already tried geocoding this session
 
     init() {
         // Tab switching
@@ -119,6 +121,16 @@ const Flights = {
                 }
                 if (ac.active_flight && (ac.active_flight.status === 'scheduled' || ac.active_flight.status === 'active')) {
                     FlightMap.drawPlannedRoute(ac.id, ac.active_flight, ac.latest_position);
+                    // If arrival coords are missing but IATA is known, geocode lazily
+                    const f = ac.active_flight;
+                    if (f.arrival_iata && !f.arrival_lat && !f.arrival_lon) {
+                        this._geocodeFlightAirports(ac.id, f).then(updated => {
+                            if (updated?.arrival_lat) {
+                                ac.active_flight = updated;
+                                FlightMap.drawPlannedRoute(ac.id, updated, ac.latest_position);
+                            }
+                        });
+                    }
                 } else {
                     if (FlightMap.plannedRoutes[ac.id]) {
                         FlightMap.plannedRoutes[ac.id].remove();
@@ -129,6 +141,23 @@ const Flights = {
         } catch (err) {
             Utils.toast('Failed to load aircraft', 'error');
             console.error(err);
+        }
+    },
+
+    async _geocodeFlightAirports(aircraftId, flight) {
+        if (this._geocodingInProgress.has(flight.id)) return null;
+        if (this._geocodeAttempted.has(flight.id)) return null;
+        this._geocodingInProgress.add(flight.id);
+        this._geocodeAttempted.add(flight.id);
+        try {
+            const resp = await fetch(`/api/flights/${flight.id}/geocode-airports`, { method: 'POST' });
+            if (!resp.ok) return null;
+            return await resp.json();
+        } catch (e) {
+            console.warn('[Flights] Airport geocode failed:', e);
+            return null;
+        } finally {
+            this._geocodingInProgress.delete(flight.id);
         }
     },
 
