@@ -801,8 +801,9 @@ body {
     .sidebar.open { transform: translateX(0); }
     .header-center { display: none; }
     .btn-primary span { display: none; }
-    .altitude-legend { bottom: 20px; left: 8px; }
-    .map-controls { top: 8px; right: 8px; }
+    .altitude-legend { bottom: 34px; left: 8px; padding: 7px 10px; }
+    .altitude-legend .legend-bar { width: 90px; }
+    .map-controls { top: 8px; right: 8px; flex-direction: row; align-items: center; gap: 4px; }
 }
 
 /* --- Premium Toggle Switch --- */
@@ -2298,7 +2299,10 @@ input:checked + .slider:before {
     .fl-iata { font-size: 19px; }
     .fl-times { font-size: 11px; }
     .fl-time-airborne { margin-left: 0; }
-    .map-style-picker { flex-direction: row; margin-top: 0; margin-left: 4px; border-top: none; border-left: 1px solid rgba(255,255,255,0.08); padding-top: 0; padding-left: 4px; }
+    /* Map controls: collapse into a compact horizontal row */
+    .map-btn { width: 32px; height: 32px; }
+    .map-style-picker { flex-direction: row; gap: 2px; margin-top: 0; margin-left: 4px; border-top: none; border-left: 1px solid rgba(255,255,255,0.08); padding-top: 0; padding-left: 6px; }
+    .map-style-btn { width: 28px; height: 28px; }
     .map-btn[data-tooltip]::after { display: none; }
 }
 

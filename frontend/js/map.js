@@ -313,29 +313,50 @@ const FlightMap = {
     },
 
     /**
-     * Draw a dashed straight line representing the planned route
+     * Draw a dashed straight line to the destination.
+     * - Scheduled flights: departure → arrival
+     * - Active flights: current position → arrival (updates as aircraft moves)
      */
-    drawPlannedRoute(aircraftId, flight) {
-        // Clear existing planned route if any
+    drawPlannedRoute(aircraftId, flight, currentPos = null) {
         if (this.plannedRoutes[aircraftId]) {
             this.plannedRoutes[aircraftId].remove();
             delete this.plannedRoutes[aircraftId];
         }
 
-        if (!flight || flight.status !== 'scheduled') return;
-        if (!flight.departure_lat || !flight.departure_lon || !flight.arrival_lat || !flight.arrival_lon) return;
+        if (!flight || !flight.arrival_lat || !flight.arrival_lon) return;
 
-        const dep = [flight.departure_lat, flight.departure_lon];
+        const isScheduled = flight.status === 'scheduled';
+        const isActive = flight.status === 'active';
+        if (!isScheduled && !isActive) return;
+
+        let startPoint;
+        if (isScheduled) {
+            if (!flight.departure_lat || !flight.departure_lon) return;
+            startPoint = [flight.departure_lat, flight.departure_lon];
+        } else {
+            if (currentPos?.latitude != null && currentPos?.longitude != null) {
+                startPoint = [currentPos.latitude, currentPos.longitude];
+            } else if (this.markers[aircraftId]) {
+                const ll = this.markers[aircraftId].getLatLng();
+                startPoint = [ll.lat, ll.lng];
+            } else {
+                return;
+            }
+        }
+
         const arr = [flight.arrival_lat, flight.arrival_lon];
+        const label = isActive
+            ? `En route to ${flight.arrival_iata || '?'}`
+            : `Planned: ${flight.departure_iata || '?'} → ${flight.arrival_iata || '?'}`;
 
-        const line = L.polyline([dep, arr], {
-            color: '#a0a0a0',
-            weight: 2,
-            opacity: 0.6,
-            dashArray: '10, 10'
+        const line = L.polyline([startPoint, arr], {
+            color: isActive ? '#93c5fd' : '#a0a0a0',
+            weight: isActive ? 1.5 : 2,
+            opacity: isActive ? 0.45 : 0.6,
+            dashArray: '8, 8'
         });
 
-        line.bindTooltip(`Planned: ${flight.departure_iata || '?'} → ${flight.arrival_iata || '?'}`, {
+        line.bindTooltip(label, {
             className: 'trail-tooltip',
             direction: 'center',
             sticky: true

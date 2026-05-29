@@ -117,8 +117,8 @@ const Flights = {
                         category: ac.category,
                     });
                 }
-                if (ac.active_flight && ac.active_flight.status === 'scheduled') {
-                    FlightMap.drawPlannedRoute(ac.id, ac.active_flight);
+                if (ac.active_flight && (ac.active_flight.status === 'scheduled' || ac.active_flight.status === 'active')) {
+                    FlightMap.drawPlannedRoute(ac.id, ac.active_flight, ac.latest_position);
                 } else {
                     if (FlightMap.plannedRoutes[ac.id]) {
                         FlightMap.plannedRoutes[ac.id].remove();
@@ -1343,6 +1343,10 @@ const Flights = {
             // Patch in-memory position so any subsequent full re-render uses fresh data
             if (ac) {
                 ac.latest_position = { ...(ac.latest_position || {}), ...msg.data };
+                // Keep destination line anchored to current position
+                if (ac.active_flight && ac.active_flight.status === 'active') {
+                    FlightMap.drawPlannedRoute(msg.aircraft_id, ac.active_flight, msg.data);
+                }
             }
 
             // Update aircraft card telemetry in-place
