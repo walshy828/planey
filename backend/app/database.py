@@ -61,6 +61,9 @@ async def init_db():
                 await conn.run_sync(Base.metadata.create_all)
                 # Self-healing database upgrade to add summary_stats column if missing
                 await conn.execute(text("ALTER TABLE flights ADD COLUMN IF NOT EXISTS summary_stats JSONB;"))
+                # Self-healing: add fa_flight_id for schedule deduplication
+                await conn.execute(text("ALTER TABLE flights ADD COLUMN IF NOT EXISTS fa_flight_id VARCHAR(100);"))
+                await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_flights_fa_flight_id ON flights(fa_flight_id);"))
                 # Self-healing: add category column to aircraft table if missing
                 await conn.execute(text("ALTER TABLE aircraft ADD COLUMN IF NOT EXISTS category VARCHAR(50) DEFAULT 'plane';"))
                 

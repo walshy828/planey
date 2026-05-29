@@ -54,70 +54,246 @@ class TrackerService:
         except Exception as ws_err:
             logger.warning(f"Failed to broadcast tracker status via WS: {ws_err}")
 
+    async def _fetch_upcoming_flights(self, tail_number: str):
+        """
+        Fetch upcoming scheduled flights from AeroAPI (preferred) or scraper fallback.
+        Returns a list of normalized dicts, or None if all sources failed (prevents
+        false cancellations when the network is down).
+        """
+        from app.services.fa_scraper import fa_scraper
+        from datetime import datetime, timezone
+        import dateutil.parser
+        from dateutil import tz as dateutil_tz
+
+        now = datetime.now(timezone.utc)
+
+        # Try AeroAPI first
+        if fa_client.is_enabled:
+            flights = await fa_client.get_upcoming_flights(tail_number)
+            if flights is not None:
+                return flights
+            # AeroAPI returned None (failed) — fall through to scraper
+
+        # Scraper fallback
+        try:
+            scraped = await fa_scraper.scrape_upcoming_flights(tail_number)
+        except Exception as e:
+            logger.warning(f"Scraper failed for {tail_number}: {e}")
+            return None  # Both sources failed — don't cancel anything
+
+        result = []
+        for f in scraped:
+            if f.get("status") in ("active", "landed"):
+                continue
+
+            dep = f.get("departure_time")
+            arr = f.get("arrival_time")
+
+            # Scraper may return raw strings or already-parsed datetimes
+            def _coerce(val):
+                if val is None:
+                    return None
+                if isinstance(val, datetime):
+                    return val if val.tzinfo else val.replace(tzinfo=timezone.utc)
+                try:
+                    dt = dateutil.parser.parse(str(val))
+                    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+                except Exception:
+                    return None
+
+            dep = _coerce(dep)
+            arr = _coerce(arr)
+
+            if not dep or dep <= now:
+                continue
+
+            result.append({
+                "fa_flight_id": None,  # scraper provides no stable ID
+                "flight_number": f.get("flight_number"),
+                "callsign": f.get("flight_number"),
+                "departure_iata": f.get("origin_code"),
+                "departure_icao": None,
+                "departure_name": f.get("origin_name"),
+                "arrival_iata": f.get("destination_code"),
+                "arrival_icao": None,
+                "arrival_name": f.get("destination_name"),
+                "scheduled_departure": dep,
+                "scheduled_arrival": arr,
+            })
+
+        return result
+
     async def sync_flight_schedules(self):
         """
-        Background job to sync flight schedules for all active aircraft.
-        Runs less frequently (e.g., every 30-60 minutes).
+        Background job: poll upstream for upcoming flights for every tracked aircraft,
+        then upsert/update/cancel scheduled flight records accordingly.
+
+        Logic per aircraft:
+          - Fetch upcoming flights from AeroAPI (preferred) or FA scraper fallback.
+          - If fetch fails entirely, skip to avoid false cancellations.
+          - For each returned flight: match by fa_flight_id, then by ±2h departure window.
+            * No match → insert new scheduled flight (with overlap guard).
+            * Match found → diff key fields; apply updates + write change history.
+          - Any existing scheduled flight NOT seen in the response (and whose departure
+            is within the next 48 h) is marked cancelled.
         """
+        from datetime import datetime, timezone, timedelta
+
+        SYNC_HORIZON_DAYS = 7      # look this far ahead
+        CANCEL_HORIZON_HOURS = 48  # only auto-cancel flights departing within this window
+        MATCH_WINDOW_HOURS = 2     # ±hours for departure-time matching when no fa_flight_id
+        OVERLAP_GUARD_HOURS = 6    # block inserting if another flight departs within ±this
+
+        now = datetime.now(timezone.utc)
+        sync_horizon = now + timedelta(days=SYNC_HORIZON_DAYS)
+        cancel_cutoff = now + timedelta(hours=CANCEL_HORIZON_HOURS)
+
         try:
             async with async_session() as session:
                 result = await session.execute(
                     select(Aircraft).where(Aircraft.active == True)
                 )
                 aircraft_list = result.scalars().all()
-
-                logger.info(f"Syncing flight schedules for {len(aircraft_list)} aircraft")
+                logger.info(f"Schedule sync: checking {len(aircraft_list)} aircraft")
 
                 for ac in aircraft_list:
                     try:
-                        # 1. Get schedule from external sources
-                        # This will check FlightAware first, then FR24
-                        data = await fr24_client.lookup_by_registration(ac.tail_number)
-                        
-                        if not data:
+                        # --- 1. Fetch upstream schedule ---
+                        upcoming = await self._fetch_upcoming_flights(ac.tail_number)
+                        if upcoming is None:
+                            logger.warning(f"Schedule sync: all sources failed for {ac.tail_number}, skipping")
                             continue
 
-                        # Update aircraft metadata if missing
-                        if not ac.aircraft_type and data.get("aircraft_type"):
-                            ac.aircraft_type = data["aircraft_type"]
-                        if not ac.airline and data.get("airline"):
-                            ac.airline = data["airline"]
-                        if not ac.icao24_hex and data.get("icao24_hex"):
-                            ac.icao24_hex = data["icao24_hex"]
+                        # Filter to the sync horizon
+                        upcoming = [
+                            f for f in upcoming
+                            if f.get("scheduled_departure")
+                            and now < f["scheduled_departure"] <= sync_horizon
+                        ]
 
-                        # 2. Check if we already have this flight
-                        flight_num = data.get("flight_number")
-                        if not flight_num:
-                            continue
-
-                        existing_flight = await session.execute(
+                        # --- 2. Load existing scheduled flights for this aircraft ---
+                        res = await session.execute(
                             select(Flight).where(
                                 Flight.aircraft_id == ac.id,
-                                Flight.flight_number == flight_num,
-                                Flight.status.in_(["scheduled", "active"])
+                                Flight.status == "scheduled",
+                                Flight.scheduled_departure > now,
                             )
                         )
-                        if existing_flight.scalars().first():
-                            continue # Already have it
+                        existing: list[Flight] = list(res.scalars().all())
 
-                        # 3. Add new flight if found
-                        new_flight = Flight(
-                            aircraft_id=ac.id,
-                            flight_number=flight_num,
-                            callsign=data.get("callsign") or flight_num,
-                            departure_iata=data.get("departure_iata"),
-                            arrival_iata=data.get("arrival_iata"),
-                            status=data.get("status") or "scheduled",
-                            scheduled_departure=data.get("scheduled_departure"),
-                            scheduled_arrival=data.get("scheduled_arrival"),
+                        # Track which existing flights we matched this poll
+                        matched_existing_ids: set[str] = set()
+
+                        for fd in upcoming:
+                            fa_id = fd.get("fa_flight_id")
+                            sched_dep = fd["scheduled_departure"]
+
+                            # --- Match existing record ---
+                            match: Optional[Flight] = None
+                            if fa_id:
+                                match = next((f for f in existing if f.fa_flight_id == fa_id), None)
+                            if not match:
+                                window = timedelta(hours=MATCH_WINDOW_HOURS)
+                                match = next(
+                                    (
+                                        f for f in existing
+                                        if f.scheduled_departure
+                                        and abs(f.scheduled_departure - sched_dep) <= window
+                                    ),
+                                    None,
+                                )
+
+                            if match:
+                                matched_existing_ids.add(str(match.id))
+
+                                # --- UPDATE: apply diffs ---
+                                updates: dict = {}
+                                if fa_id and match.fa_flight_id != fa_id:
+                                    updates["fa_flight_id"] = fa_id
+                                for field in (
+                                    "scheduled_departure", "scheduled_arrival",
+                                    "departure_iata", "departure_icao", "departure_name",
+                                    "arrival_iata", "arrival_icao", "arrival_name",
+                                    "flight_number",
+                                ):
+                                    new_val = fd.get(field)
+                                    if new_val is not None and getattr(match, field) != new_val:
+                                        updates[field] = new_val
+
+                                if updates:
+                                    await record_flight_changes(match, updates, "schedule_sync", session)
+                                    for k, v in updates.items():
+                                        setattr(match, k, v)
+                                    logger.info(
+                                        f"Schedule sync: updated flight {match.flight_number or match.id} "
+                                        f"for {ac.tail_number} — {list(updates.keys())}"
+                                    )
+                            else:
+                                # --- OVERLAP GUARD before insert ---
+                                guard = timedelta(hours=OVERLAP_GUARD_HOURS)
+                                overlap_res = await session.execute(
+                                    select(Flight).where(
+                                        Flight.aircraft_id == ac.id,
+                                        Flight.status.in_(["scheduled", "active"]),
+                                        Flight.scheduled_departure >= sched_dep - guard,
+                                        Flight.scheduled_departure <= sched_dep + guard,
+                                    )
+                                )
+                                if overlap_res.scalars().first():
+                                    logger.info(
+                                        f"Schedule sync: skipping {fd.get('flight_number')} for "
+                                        f"{ac.tail_number} — overlaps existing scheduled flight"
+                                    )
+                                    continue
+
+                                # --- INSERT new scheduled flight ---
+                                new_flight = Flight(
+                                    aircraft_id=ac.id,
+                                    fa_flight_id=fa_id,
+                                    flight_number=fd.get("flight_number"),
+                                    callsign=fd.get("callsign"),
+                                    departure_iata=fd.get("departure_iata"),
+                                    departure_icao=fd.get("departure_icao"),
+                                    departure_name=fd.get("departure_name"),
+                                    arrival_iata=fd.get("arrival_iata"),
+                                    arrival_icao=fd.get("arrival_icao"),
+                                    arrival_name=fd.get("arrival_name"),
+                                    scheduled_departure=sched_dep,
+                                    scheduled_arrival=fd.get("scheduled_arrival"),
+                                    status="scheduled",
+                                )
+                                session.add(new_flight)
+                                logger.info(
+                                    f"Schedule sync: new flight {fd.get('flight_number')} "
+                                    f"{fd.get('departure_iata')}→{fd.get('arrival_iata')} "
+                                    f"for {ac.tail_number} @ {sched_dep.isoformat()}"
+                                )
+
+                        # --- 3. CANCELLATION: existing flights not seen in this poll ---
+                        # Only auto-cancel flights departing within the cancel horizon to
+                        # avoid nuking far-future flights that AeroAPI might not return yet.
+                        for ex in existing:
+                            if str(ex.id) in matched_existing_ids:
+                                continue
+                            if ex.scheduled_departure and ex.scheduled_departure > cancel_cutoff:
+                                continue  # too far out — don't cancel speculatively
+                            await record_flight_changes(
+                                ex, {"status": "cancelled"}, "schedule_sync", session
+                            )
+                            ex.status = "cancelled"
+                            logger.info(
+                                f"Schedule sync: cancelled flight {ex.flight_number or ex.id} "
+                                f"for {ac.tail_number} (not in upstream schedule)"
+                            )
+
+                        await session.commit()
+
+                    except Exception as ac_err:
+                        logger.warning(
+                            f"Schedule sync: error processing {ac.tail_number}: {ac_err}",
+                            exc_info=True,
                         )
-                        session.add(new_flight)
-                        logger.info(f"Auto-discovered flight {flight_num} for {ac.tail_number}")
-
-                    except Exception as e:
-                        logger.warning(f"Failed to sync schedule for {ac.tail_number}: {e}")
-
-                await session.commit()
+                        await session.rollback()
 
         except Exception as e:
             logger.error(f"Flight schedule sync failed: {e}", exc_info=True)

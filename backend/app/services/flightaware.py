@@ -1,9 +1,24 @@
 import logging
 import httpx
 from typing import Optional, List
+from datetime import datetime, timezone
+import dateutil.parser
 import os
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_aeroapi_dt(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        dt = dateutil.parser.isoparse(value)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except Exception:
+        return None
+
 
 class FlightAwareClient:
     """Client for FlightAware AeroAPI (v4)."""
@@ -38,6 +53,51 @@ class FlightAwareClient:
             logger.error(f"FlightAware AeroAPI request failed: {e}")
         
         return []
+
+    async def get_upcoming_flights(self, registration: str) -> Optional[List[dict]]:
+        """
+        Return normalized upcoming/scheduled flights for an aircraft from AeroAPI.
+        Returns None on fetch failure (vs empty list for legitimate no-results).
+        """
+        if not self.is_enabled:
+            return None
+
+        raw = await self.get_aircraft_flights(registration)
+        if raw is None:
+            return None
+
+        now = datetime.now(timezone.utc)
+        result = []
+        for f in raw:
+            status = (f.get("status") or "").lower()
+            # Skip flights that are already in progress or past
+            if any(s in status for s in ["en route", "arrived", "landed", "cancelled", "diverted"]):
+                continue
+
+            sched_dep = _parse_aeroapi_dt(f.get("scheduled_out") or f.get("scheduled_off"))
+            sched_arr = _parse_aeroapi_dt(f.get("scheduled_in") or f.get("scheduled_on"))
+
+            # Only include future flights
+            if not sched_dep or sched_dep <= now:
+                continue
+
+            origin = f.get("origin") or {}
+            dest = f.get("destination") or {}
+            result.append({
+                "fa_flight_id": f.get("fa_flight_id"),
+                "flight_number": f.get("ident") or f.get("ident_iata"),
+                "callsign": f.get("ident"),
+                "departure_iata": origin.get("code_iata"),
+                "departure_icao": origin.get("code_icao"),
+                "departure_name": origin.get("name"),
+                "arrival_iata": dest.get("code_iata"),
+                "arrival_icao": dest.get("code_icao"),
+                "arrival_name": dest.get("name"),
+                "scheduled_departure": sched_dep,
+                "scheduled_arrival": sched_arr,
+            })
+
+        return result
 
     async def lookup_registration(self, registration: str) -> Optional[dict]:
         """

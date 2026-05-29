@@ -112,6 +112,7 @@ class FlightResponse(BaseModel):
     """Schema for flight API responses."""
     id: uuid.UUID
     aircraft_id: uuid.UUID
+    fa_flight_id: Optional[str] = None
     flight_number: Optional[str] = None
     callsign: Optional[str] = None
     departure_iata: Optional[str] = None

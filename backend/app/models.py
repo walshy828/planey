@@ -135,6 +135,7 @@ class Flight(Base):
     status: Mapped[str] = mapped_column(String(20), default="scheduled", index=True)
 
     # Additional data
+    fa_flight_id: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
     gate_info: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     raw_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     expected_route: Mapped[str | None] = mapped_column(Text, nullable=True)
