@@ -302,7 +302,7 @@ const TelemetryAuditor = {
 
     // ── Flight Selection & Workspace ──
 
-    async selectFlight(flightId) {
+    async selectFlight(flightId, preserveTab = false) {
         this.selectedFlightId = flightId;
         this.filterAndRenderFlights();
 
@@ -311,16 +311,16 @@ const TelemetryAuditor = {
         ws.style.display = 'flex';
         document.querySelector('.auditor-container').classList.add('flight-selected');
 
-        this.sortField = 'timestamp';
-        this.sortOrder = 'desc';
-        this.selectedPositionIds.clear();
-        this.anomalyFilter = false;
-        this.sourceFilter = '';
-        document.getElementById('btn-filter-anomalies').classList.remove('active');
-        document.getElementById('positions-source-filter').value = '';
-
-        // Always start on Details tab when selecting a new flight
-        this.switchTab('details');
+        if (!preserveTab) {
+            this.sortField = 'timestamp';
+            this.sortOrder = 'desc';
+            this.selectedPositionIds.clear();
+            this.anomalyFilter = false;
+            this.sourceFilter = '';
+            document.getElementById('btn-filter-anomalies').classList.remove('active');
+            document.getElementById('positions-source-filter').value = '';
+            this.switchTab('details');
+        }
 
         try {
             const [flight, positions] = await Promise.all([
@@ -484,7 +484,7 @@ const TelemetryAuditor = {
             await API.updateFlight(this.selectedFlightId, data);
             Utils.toast('Flight details saved.', 'success');
             await this.loadFlights();
-            this.selectFlight(this.selectedFlightId);
+            this.selectFlight(this.selectedFlightId, true);
         } catch (err) {
             console.error('Failed to save flight details:', err);
             Utils.toast(`Save failed: ${err.message}`, 'error');
@@ -559,7 +559,7 @@ const TelemetryAuditor = {
             Utils.toast(`${count} position${count !== 1 ? 's' : ''} deleted.`, 'success');
             this.selectedPositionIds.clear();
             this.updateBulkDeleteBtn();
-            this.selectFlight(this.selectedFlightId);
+            this.selectFlight(this.selectedFlightId, true);
         } catch (err) {
             Utils.toast(`Error: ${err.message}`, 'error');
         }
@@ -826,7 +826,7 @@ const TelemetryAuditor = {
                 });
                 Utils.toast('Position updated.', 'success');
                 overlay.remove();
-                this.selectFlight(this.selectedFlightId);
+                this.selectFlight(this.selectedFlightId, true);
             } catch (err) {
                 Utils.toast(`Error: ${err.message}`, 'error');
             }
@@ -840,7 +840,7 @@ const TelemetryAuditor = {
             Utils.toast('Position deleted.', 'success');
             this.selectedPositionIds.delete(posId);
             this.updateBulkDeleteBtn();
-            this.selectFlight(this.selectedFlightId);
+            this.selectFlight(this.selectedFlightId, true);
         } catch (err) {
             Utils.toast(`Error: ${err.message}`, 'error');
         }
@@ -869,7 +869,8 @@ const TelemetryAuditor = {
 
         const optionsHtml = candidates.map(f => {
             const route = `${f.departure_iata || '???'} → ${f.arrival_iata || '???'}`;
-            const label = `${f.flight_number || f.callsign || 'Unknown'} (${route}) · ${f.status} · ${Utils.formatDateShort(f.created_at)}`;
+            const pts = f.position_count != null ? `${f.position_count} pts` : '? pts';
+            const label = `${f.flight_number || f.callsign || 'Unknown'} (${route}) · ${pts} · ${f.status} · ${Utils.formatDateShort(f.created_at)}`;
             return `<option value="${f.id}">${label}</option>`;
         }).join('');
 
@@ -972,7 +973,7 @@ const TelemetryAuditor = {
                 await API.updatePosition(posId, { flight_id: targetFlightId });
                 Utils.toast('Position reassigned.', 'success');
                 overlay.remove();
-                this.selectFlight(this.selectedFlightId);
+                this.selectFlight(this.selectedFlightId, true);
             } catch (err) {
                 Utils.toast(`Error: ${err.message}`, 'error');
             }
