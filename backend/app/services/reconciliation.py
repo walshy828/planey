@@ -124,11 +124,11 @@ class ReconciliationService:
         if flight.status not in ["active", "scheduled"]:
             return {"status": "skipped", "message": f"Flight {flight.id} is already {flight.status}"}
 
-        # Recency guard: never close a flight that had airborne positions in the last 20 minutes.
+        # Recency guard: never close a flight that had airborne positions in the last 10 minutes.
         # This prevents premature closure during brief ADS-B coverage gaps, which would cause
         # the tracker to split one physical flight leg into multiple flight records.
         from app.models import Position as _Pos
-        _recent_cutoff = datetime.now(timezone.utc) - timedelta(minutes=20)
+        _recent_cutoff = datetime.now(timezone.utc) - timedelta(minutes=10)
         _recent_res = await db.execute(
             select(_Pos)
             .where(
@@ -397,74 +397,182 @@ class ReconciliationService:
             position_data={"on_ground": True}
         )
 
+    async def _close_flight_direct(
+        self,
+        flight: Flight,
+        last_pos,
+        aircraft: Optional[Aircraft],
+        session: AsyncSession,
+    ) -> None:
+        """
+        Close a flight directly using its last known on-ground position.
+        Used when we're confident the aircraft has landed (last position was
+        on-ground and old enough) without needing an external API call.
+        """
+        from app.models import Position, record_flight_changes
+        from app.services.websocket import ws_manager
+
+        landing_time = last_pos.timestamp
+        if landing_time.tzinfo is None:
+            landing_time = landing_time.replace(tzinfo=timezone.utc)
+
+        updates: dict = {"status": "landed", "actual_arrival": str(landing_time)}
+
+        if not flight.arrival_iata and not flight.arrival_name:
+            try:
+                arrival_name = await geocoder.get_location_name(last_pos.latitude, last_pos.longitude)
+                if arrival_name:
+                    updates["arrival_name"] = arrival_name
+            except Exception:
+                pass
+
+        await record_flight_changes(flight, updates, "reconciliation", session)
+
+        flight.status = "landed"
+        flight.actual_arrival = landing_time
+        if updates.get("arrival_name"):
+            flight.arrival_name = updates["arrival_name"]
+            flight.arrival_lat = last_pos.latitude
+            flight.arrival_lon = last_pos.longitude
+
+        try:
+            from app.services.stats_calculator import calculate_flight_stats
+            flight.summary_stats = await calculate_flight_stats(flight, session)
+        except Exception as e:
+            logger.warning(f"Stats calculation failed for direct close of {flight.id}: {e}")
+
+        if aircraft:
+            await self._notify_ha(aircraft, flight)
+
+        await session.commit()
+
+        await ws_manager.broadcast({
+            "type": "flight_status",
+            "flight_id": str(flight.id),
+            "aircraft_id": str(flight.aircraft_id),
+            "old_status": "active",
+            "new_status": "landed",
+            "summary_stats": flight.summary_stats,
+        })
+
+        logger.info(
+            f"Direct close: flight {flight.flight_number or flight.id} "
+            f"({aircraft.tail_number if aircraft else '?'}) landed at {landing_time.isoformat()}"
+        )
+
     async def run_reconciliation_job(self):
-        """Background job to reconcile stuck flights."""
+        """
+        Background job to detect and close stuck active flights. Runs every 5 minutes.
+
+        Two closure paths per flight, chosen by last-position state:
+
+        1. Last position was on-ground (tracker state lost after restart / brief coverage gap):
+           Close directly — no external API call.
+           Thresholds: helicopter ≥ 8 min on-ground, plane ≥ 15 min on-ground.
+
+        2. Last position was airborne (or no positions at all):
+           Call reconcile_flight() which checks FR24/FA.
+           Thresholds: helicopter ≥ 15 min stale, plane ≥ 30 min stale.
+
+        The old 60-min internal throttle has been removed. APScheduler's max_instances=1
+        already prevents concurrent runs; the per-flight 10-min recency guard inside
+        reconcile_flight() prevents premature closure.
+        """
         from app.database import async_session
-        from app.models import Setting
-        
+        from app.models import Setting, Position
+
+        # Minutes of on-ground staleness before direct close (no external API)
+        HELI_GROUND_CLOSE_MINS = 8
+        PLANE_GROUND_CLOSE_MINS = 15
+
+        # Minutes of no-position staleness before external reconciliation
+        HELI_STALE_MINS = 15
+        PLANE_STALE_MINS = 30
+
+        now = datetime.now(timezone.utc)
+
         async with async_session() as session:
-            # 1. Get Settings
-            res = await session.execute(select(Setting).where(Setting.key == 'reconciliation_interval_minutes'))
-            setting = res.scalars().first()
-            interval_mins = int(setting.value) if setting and setting.value.isdigit() else 60
-            
-            res_thresh = await session.execute(select(Setting).where(Setting.key == 'stuck_flight_threshold_minutes'))
-            thresh_setting = res_thresh.scalars().first()
-            threshold_mins = int(thresh_setting.value) if thresh_setting and thresh_setting.value.isdigit() else 120
-            
-            # 2. Check if we should run (we can track last run time in settings)
-            res_last = await session.execute(select(Setting).where(Setting.key == 'last_reconciliation_run'))
-            last_run_setting = res_last.scalars().first()
-            
-            now = datetime.now(timezone.utc)
-            if last_run_setting:
-                try:
-                    last_run = datetime.fromisoformat(last_run_setting.value)
-                    if (now - last_run).total_seconds() < (interval_mins * 60):
-                        return # Not time yet
-                except: pass
-                
-            logger.info("Running stuck flight reconciliation job...")
-            
-            # 3. Find stuck flights
-            cutoff_time = now - timedelta(minutes=threshold_mins)
-            
-            # Flights that are active but their aircraft hasn't had a position since cutoff
-            # Simple approach: find all active flights, then check latest position
-            result = await session.execute(
-                select(Flight).where(Flight.status == "active")
-            )
+            result = await session.execute(select(Flight).where(Flight.status == "active"))
             active_flights = result.scalars().all()
-            
-            for f in active_flights:
+
+            if not active_flights:
+                return
+
+            logger.info(f"Reconciliation job: checking {len(active_flights)} active flight(s)")
+
+            for flight in active_flights:
                 try:
-                    # Look for recent positions
-                    # This is slightly inefficient but safe
-                    res_pos = await session.execute(
-                        select(Aircraft).where(Aircraft.id == f.aircraft_id)
+                    ac_res = await session.execute(
+                        select(Aircraft).where(Aircraft.id == flight.aircraft_id)
                     )
-                    ac = res_pos.scalars().first()
-                    
-                    if ac:
-                        # Check last position time (simplest is checking aircraft's last update or pulling position)
-                        from app.models import Position
-                        pos_res = await session.execute(
-                            select(Position).where(Position.aircraft_id == ac.id).order_by(Position.timestamp.desc()).limit(1)
-                        )
-                        last_pos = pos_res.scalars().first()
-                        
-                        if not last_pos or last_pos.timestamp < cutoff_time:
-                            logger.info(f"Flight {f.flight_number} is stuck (last pos: {last_pos.timestamp if last_pos else 'never'}). Attempting reconciliation.")
-                            await self.reconcile_flight(str(f.id), session)
-                            await asyncio.sleep(2) # rate limit
+                    ac = ac_res.scalars().first()
+                    is_heli = ac and ac.category == "helicopter"
+
+                    ground_close_mins = HELI_GROUND_CLOSE_MINS if is_heli else PLANE_GROUND_CLOSE_MINS
+                    stale_mins = HELI_STALE_MINS if is_heli else PLANE_STALE_MINS
+
+                    # Last position for this specific flight
+                    pos_res = await session.execute(
+                        select(Position)
+                        .where(Position.flight_id == flight.id)
+                        .order_by(Position.timestamp.desc())
+                        .limit(1)
+                    )
+                    last_pos = pos_res.scalars().first()
+
+                    if last_pos:
+                        last_ts = last_pos.timestamp
+                        if last_ts.tzinfo is None:
+                            last_ts = last_ts.replace(tzinfo=timezone.utc)
+                        age_mins = (now - last_ts).total_seconds() / 60
+
+                        if last_pos.on_ground and age_mins >= ground_close_mins:
+                            # On-ground and stale — close directly without external API
+                            logger.info(
+                                f"{'Helicopter' if is_heli else 'Flight'} "
+                                f"{flight.flight_number or flight.id} last on-ground "
+                                f"{age_mins:.0f} min ago — closing directly"
+                            )
+                            await self._close_flight_direct(flight, last_pos, ac, session)
+                            continue
+
+                        if age_mins >= stale_mins:
+                            # No positions for too long — try external reconciliation
+                            logger.info(
+                                f"Flight {flight.flight_number or flight.id} stale "
+                                f"{age_mins:.0f} min (threshold {stale_mins}) — attempting reconciliation"
+                            )
+                            await self.reconcile_flight(str(flight.id), session)
+                            await asyncio.sleep(1)
+                    else:
+                        # No positions at all — use flight creation time as age proxy
+                        created = flight.created_at
+                        if created.tzinfo is None:
+                            created = created.replace(tzinfo=timezone.utc)
+                        created_age_mins = (now - created).total_seconds() / 60
+                        if created_age_mins >= stale_mins:
+                            logger.info(
+                                f"Flight {flight.flight_number or flight.id} has no positions "
+                                f"and is {created_age_mins:.0f} min old — attempting reconciliation"
+                            )
+                            await self.reconcile_flight(str(flight.id), session)
+                            await asyncio.sleep(1)
+
                 except Exception as e:
-                    logger.error(f"Error checking stuck flight {f.id}: {e}")
-            
-            # 4. Update last run
+                    logger.error(
+                        f"Reconciliation job: error processing flight {flight.id}: {e}",
+                        exc_info=True,
+                    )
+
+            # Record last run timestamp for observability (no longer used for throttling)
+            res_last = await session.execute(
+                select(Setting).where(Setting.key == "last_reconciliation_run")
+            )
+            last_run_setting = res_last.scalars().first()
             if last_run_setting:
                 last_run_setting.value = now.isoformat()
             else:
-                session.add(Setting(key='last_reconciliation_run', value=now.isoformat()))
+                session.add(Setting(key="last_reconciliation_run", value=now.isoformat()))
             await session.commit()
 
     async def reconcile_aircraft(self, aircraft_id: str, db: AsyncSession) -> dict:
