@@ -195,13 +195,8 @@ const FlightMap = {
                 zIndexOffset: 1000
             }).addTo(this.map);
 
-            // Popup content
-            marker.bindPopup('', { className: 'flight-popup', maxWidth: 260 });
-            marker.on('click', () => {
-                marker.setPopupContent(this._popupHtml(data));
-            });
-
-            // Tooltip (Hover)
+            // Tooltip (Hover + Click)
+            marker.on('click', () => marker.openTooltip());
             marker.bindTooltip(this._tooltipHtml(data), {
                 className: 'trail-tooltip',
                 direction: 'top',
@@ -212,11 +207,8 @@ const FlightMap = {
             this.markers[aircraftId] = marker;
         }
 
-        // Update popup/tooltip if open
+        // Update tooltip if visible
         const marker = this.markers[aircraftId];
-        if (marker.isPopupOpen()) {
-            marker.setPopupContent(this._popupHtml(data));
-        }
         if (marker.getTooltip()) {
             marker.setTooltipContent(this._tooltipHtml(data));
         }
@@ -258,6 +250,7 @@ const FlightMap = {
                 sticky: true,
                 offset: [0, -5]
             });
+            line.on('click', (e) => line.openTooltip(e.latlng));
 
             if (this.showTrails) line.addTo(this.map);
             segments.push(line);
@@ -295,6 +288,7 @@ const FlightMap = {
                 sticky: true,
                 offset: [0, -5]
             });
+            seg.on('click', (e) => seg.openTooltip(e.latlng));
 
             seg.addTo(this.map);
             segments.push(seg);
@@ -487,33 +481,6 @@ const FlightMap = {
                 else s.remove();
             });
         });
-    },
-
-    _popupHtml(data) {
-        return `
-            <div style="min-width:200px">
-                <div style="font-size:15px;font-weight:700;color:#00d4ff;margin-bottom:6px">
-                    ${data.tail_number || 'Unknown'}${data.category === 'helicopter' ? ' 🚁' : ''}
-                    ${data.flight_number ? `<span style="font-size:12px;color:#8899aa;margin-left:6px">${data.flight_number}</span>` : ''}
-                </div>
-                ${data.departure_iata || data.arrival_iata ? `
-                    <div style="font-size:14px;margin-bottom:8px;display:flex;align-items:center;gap:6px">
-                        <strong>${data.departure_iata || '???'}</strong>
-                        <span style="color:#556677">→</span>
-                        <strong>${data.arrival_iata || '???'}</strong>
-                    </div>
-                ` : ''}
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:12px">
-                    <div><span style="color:#556677">Alt:</span> ${Utils.formatAlt(data.altitude_ft)}${data.ground_elevation_ft != null && data.altitude_ft != null ? `<span style="color:#556677;font-size:10px"> (${Math.round(data.altitude_ft - data.ground_elevation_ft).toLocaleString()} AGL)</span>` : ''}</div>
-                    <div><span style="color:#556677">Spd:</span> ${Utils.formatSpeed(data.ground_speed_kts)}</div>
-                    <div><span style="color:#556677">Hdg:</span> ${Utils.formatHeading(data.heading)}</div>
-                    <div><span style="color:#556677">VS:</span> ${Utils.formatVRate(data.vertical_rate_fpm)}</div>
-                </div>
-                <div style="font-size:10px;color:#556677;margin-top:6px">
-                    ${data.timestamp ? `<span class="live-time-ago" data-timestamp="${data.timestamp}">${Utils.timeAgo(data.timestamp)}</span>` : ''}
-                </div>
-            </div>
-        `;
     },
 
     _trailTooltipHtml(pos, timeLabel = null) {
