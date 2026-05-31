@@ -511,7 +511,7 @@ class ReconciliationService:
         """
         Background job to detect and close stuck active flights. Runs every 5 minutes.
 
-        Two closure paths per flight, chosen by last-position state:
+        Three closure paths per flight, chosen by last-position state:
 
         1. Last position was on-ground (tracker state lost after restart / brief coverage gap):
            Close directly — no external API call.
@@ -521,12 +521,18 @@ class ReconciliationService:
            Call reconcile_flight() which checks FR24/FA.
            Thresholds: helicopter ≥ 15 min stale, plane ≥ 30 min stale.
 
-        The old 60-min internal throttle has been removed. APScheduler's max_instances=1
-        already prevents concurrent runs; the per-flight 10-min recency guard inside
-        reconcile_flight() prevents premature closure.
+        3. Hard failsafe — force-close regardless of external API result:
+           Triggered when reconciliation fails (no external data, e.g. VFR/helicopter) or
+           the external source still reports "active" but position data is very old.
+           Thresholds: failed → heli ≥ 60 min, plane ≥ 120 min.
+                       skipped (external says active) → heli ≥ 120 min, plane ≥ 240 min.
+
+        APScheduler's max_instances=1 prevents concurrent runs; the per-flight 10-min
+        recency guard inside reconcile_flight() prevents premature closure.
         """
         from app.database import async_session
-        from app.models import Setting, Position
+        from app.models import Setting, Position, record_flight_changes
+        from app.services.websocket import ws_manager
 
         # Minutes of on-ground staleness before direct close (no external API)
         HELI_GROUND_CLOSE_MINS = 8
@@ -535,6 +541,16 @@ class ReconciliationService:
         # Minutes of no-position staleness before external reconciliation
         HELI_STALE_MINS = 15
         PLANE_STALE_MINS = 30
+
+        # Hard failsafe: force-close when external reconciliation returns no data
+        # (covers VFR flights, helicopter hops, and stale FR24/FA records)
+        HELI_FORCE_CLOSE_MINS = 60
+        PLANE_FORCE_CLOSE_MINS = 120
+
+        # Hard failsafe: force-close even when external source says "active"
+        # (covers cases where FR24/FA lags hours behind reality)
+        HELI_FORCE_CLOSE_HARD_MINS = 120
+        PLANE_FORCE_CLOSE_HARD_MINS = 240
 
         now = datetime.now(timezone.utc)
 
@@ -557,6 +573,8 @@ class ReconciliationService:
 
                     ground_close_mins = HELI_GROUND_CLOSE_MINS if is_heli else PLANE_GROUND_CLOSE_MINS
                     stale_mins = HELI_STALE_MINS if is_heli else PLANE_STALE_MINS
+                    force_close_mins = HELI_FORCE_CLOSE_MINS if is_heli else PLANE_FORCE_CLOSE_MINS
+                    force_close_hard_mins = HELI_FORCE_CLOSE_HARD_MINS if is_heli else PLANE_FORCE_CLOSE_HARD_MINS
 
                     # Last position for this specific flight
                     pos_res = await session.execute(
@@ -584,13 +602,35 @@ class ReconciliationService:
                             continue
 
                         if age_mins >= stale_mins:
-                            # No positions for too long — try external reconciliation
+                            # Airborne and stale — try external reconciliation
                             logger.info(
                                 f"Flight {flight.flight_number or flight.id} stale "
                                 f"{age_mins:.0f} min (threshold {stale_mins}) — attempting reconciliation"
                             )
-                            await self.reconcile_flight(str(flight.id), session)
+                            recon_result = await self.reconcile_flight(str(flight.id), session)
                             await asyncio.sleep(1)
+
+                            # Hard failsafe: if external reconciliation couldn't resolve the
+                            # flight and the position is very old, force-close it directly.
+                            # This handles VFR/helicopter flights with no FA/FR24 data and
+                            # cases where the external source lags hours behind reality.
+                            recon_status = recon_result.get("status")
+                            if recon_status == "failed" and age_mins >= force_close_mins:
+                                logger.warning(
+                                    f"Force-closing flight {flight.flight_number or flight.id} "
+                                    f"({ac.tail_number if ac else '?'}): no external data found "
+                                    f"and last position is {age_mins:.0f} min old"
+                                )
+                                await self._close_flight_direct(flight, last_pos, ac, session)
+                            elif recon_status == "skipped" and age_mins >= force_close_hard_mins:
+                                # External source still says "active" but position is extremely
+                                # old — the external source is almost certainly stale at this point.
+                                logger.warning(
+                                    f"Force-closing flight {flight.flight_number or flight.id} "
+                                    f"({ac.tail_number if ac else '?'}): external source says "
+                                    f"active but last position is {age_mins:.0f} min old"
+                                )
+                                await self._close_flight_direct(flight, last_pos, ac, session)
                     else:
                         # No positions at all — use flight creation time as age proxy
                         created = flight.created_at
@@ -602,8 +642,37 @@ class ReconciliationService:
                                 f"Flight {flight.flight_number or flight.id} has no positions "
                                 f"and is {created_age_mins:.0f} min old — attempting reconciliation"
                             )
-                            await self.reconcile_flight(str(flight.id), session)
+                            recon_result = await self.reconcile_flight(str(flight.id), session)
                             await asyncio.sleep(1)
+
+                            # Hard failsafe for position-less flights: if external reconciliation
+                            # failed and the flight has been open long enough, force-close it.
+                            recon_status = recon_result.get("status")
+                            if recon_status in ("failed", "skipped") and created_age_mins >= force_close_hard_mins:
+                                logger.warning(
+                                    f"Force-closing position-less flight "
+                                    f"{flight.flight_number or flight.id} "
+                                    f"({ac.tail_number if ac else '?'}): "
+                                    f"external reconciliation {recon_status} after "
+                                    f"{created_age_mins:.0f} min"
+                                )
+                                close_time = datetime.now(timezone.utc)
+                                updates = {"status": "landed", "actual_arrival": str(close_time)}
+                                await record_flight_changes(
+                                    flight, updates, "reconciliation_force_close", session
+                                )
+                                flight.status = "landed"
+                                flight.actual_arrival = close_time
+                                if ac:
+                                    await self._notify_ha(ac, flight)
+                                await session.commit()
+                                await ws_manager.broadcast({
+                                    "type": "flight_status",
+                                    "flight_id": str(flight.id),
+                                    "aircraft_id": str(flight.aircraft_id),
+                                    "old_status": "active",
+                                    "new_status": "landed",
+                                })
 
                 except Exception as e:
                     logger.error(
