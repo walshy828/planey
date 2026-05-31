@@ -548,9 +548,13 @@ const FlightMap = {
     },
 
     _tooltipHtml(data) {
+        const aircraftLabel = data.display_name || data.tail_number;
         const timeLabel = data.timestamp
             ? `<span class="live-time-ago" data-timestamp="${data.timestamp}">${Utils.timeAgo(data.timestamp)}</span>`
             : '—';
-        return this._trailTooltipHtml(data, timeLabel);
+        const base = this._trailTooltipHtml(data, timeLabel);
+        if (!aircraftLabel) return base;
+        const labelBlock = `<div class="tt-aircraft-label">${aircraftLabel}${data.display_name && data.tail_number ? `<span class="tt-aircraft-reg"> · ${data.tail_number}</span>` : ''}</div>`;
+        return base.replace('<div class="track-tooltip">', `<div class="track-tooltip">${labelBlock}`);
     }
 };

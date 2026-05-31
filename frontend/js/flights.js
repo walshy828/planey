@@ -112,6 +112,7 @@ const Flights = {
                 if (ac.latest_position) {
                     FlightMap.updateMarker(ac.id, {
                         ...ac.latest_position,
+                        display_name: ac.display_name,
                         tail_number: ac.tail_number,
                         flight_number: ac.active_flight?.flight_number,
                         departure_iata: ac.active_flight?.departure_iata,
@@ -173,6 +174,7 @@ const Flights = {
                     const latest = positions[positions.length - 1];
                     FlightMap.updateMarker(ac.id, {
                         ...latest,
+                        display_name: ac.display_name,
                         tail_number: ac.tail_number,
                         flight_number: ac.active_flight?.flight_number,
                         departure_iata: ac.active_flight?.departure_iata,
@@ -372,12 +374,26 @@ const Flights = {
                 isAirborne = !pos.on_ground;
             }
 
-            // Subtitle: display_name OR aircraft_type + airline
-            const subParts = [];
-            if (ac.display_name) subParts.push(ac.display_name);
-            else if (ac.aircraft_type) subParts.push(ac.aircraft_type);
-            if (ac.airline) subParts.push(ac.airline);
-            const acSub = subParts.join(' · ') || 'Unknown type';
+            // Identity block: display_name as primary label if set, else fall back to tail number
+            const heliTag = isHeli ? ' <span class="ac-category-tag">HELI</span>' : '';
+            let identityHtml;
+            if (ac.display_name) {
+                const typeLine = [ac.aircraft_type, ac.airline].filter(Boolean).join(' · ');
+                identityHtml = `
+                    <div class="ac-label">${ac.display_name}</div>
+                    <div class="ac-reg">${ac.tail_number}${heliTag}</div>
+                    ${typeLine ? `<div class="ac-sub">${typeLine}</div>` : ''}
+                `;
+            } else {
+                const subParts = [];
+                if (ac.aircraft_type) subParts.push(ac.aircraft_type);
+                if (ac.airline) subParts.push(ac.airline);
+                const acSub = subParts.join(' · ') || 'Unknown type';
+                identityHtml = `
+                    <div class="ac-tail">${ac.tail_number}${heliTag}</div>
+                    <div class="ac-sub">${acSub}</div>
+                `;
+            }
 
             // Context section
             let contextHtml = '';
@@ -490,8 +506,7 @@ const Flights = {
             card.innerHTML = `
                 <div class="ac-header">
                     <div class="ac-identity">
-                        <div class="ac-tail">${ac.tail_number}${isHeli ? ' <span class="ac-category-tag">HELI</span>' : ''}</div>
-                        <div class="ac-sub">${acSub}</div>
+                        ${identityHtml}
                     </div>
                     <div class="ac-header-right">
                         ${Utils.statusBadge(statusText)}
@@ -906,6 +921,7 @@ const Flights = {
         if (!tail) { Utils.toast('Tail number is required', 'warning'); return; }
 
         const data = {
+            display_name: document.getElementById('input-display-name').value.trim() || null,
             tail_number: tail,
             icao24_hex: document.getElementById('input-icao24').value.trim() || null,
             aircraft_type: document.getElementById('input-aircraft-type').value.trim() || null,
@@ -957,7 +973,7 @@ const Flights = {
     },
 
     _clearAddAircraftForm() {
-        ['input-tail-number', 'input-icao24', 'input-aircraft-type', 'input-airline'].forEach(id => {
+        ['input-display-name', 'input-tail-number', 'input-icao24', 'input-aircraft-type', 'input-airline'].forEach(id => {
             document.getElementById(id).value = '';
         });
         document.getElementById('input-aircraft-category').value = 'plane';
@@ -986,6 +1002,7 @@ const Flights = {
         document.getElementById('modal-aircraft-title').textContent = 'Edit Aircraft';
         document.getElementById('btn-confirm-add-aircraft').textContent = 'Save Changes';
         
+        document.getElementById('input-display-name').value = ac.display_name || '';
         document.getElementById('input-tail-number').value = ac.tail_number || '';
         document.getElementById('input-icao24').value = ac.icao24_hex || '';
         document.getElementById('input-aircraft-type').value = ac.aircraft_type || '';
@@ -1052,6 +1069,7 @@ const Flights = {
     async _updateAircraft() {
         const id = this.editingAircraftId;
         const data = {
+            display_name: document.getElementById('input-display-name').value.trim() || null,
             tail_number: document.getElementById('input-tail-number').value.trim().toUpperCase(),
             icao24_hex: document.getElementById('input-icao24').value.trim() || null,
             aircraft_type: document.getElementById('input-aircraft-type').value.trim() || null,
@@ -1365,6 +1383,7 @@ const Flights = {
             // Update map marker immediately
             FlightMap.updateMarker(msg.aircraft_id, {
                 ...msg.data,
+                display_name: ac?.display_name,
                 tail_number: msg.tail_number,
                 category: category,
             });
