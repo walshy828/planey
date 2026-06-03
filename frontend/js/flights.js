@@ -1244,7 +1244,16 @@ const Flights = {
         menu.className = 'aircraft-dropdown-menu';
 
         // Add options HTML
-        let html = `
+        let html = '';
+        if (flight && flight.status === 'active') {
+            html += `
+            <div class="dropdown-item btn-close-flight warning-item" data-id="${flight.id}">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+                Mark as Landed
+            </div>
+            <div class="dropdown-divider"></div>`;
+        }
+        html += `
             <div class="dropdown-item btn-add-flight-for" data-id="${ac.id}">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
                 Add Flight
@@ -1307,6 +1316,19 @@ const Flights = {
         document.body.appendChild(menu);
 
         // Bind inner actions
+        menu.querySelector('.btn-close-flight')?.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            menu.remove();
+            if (!confirm(`Mark flight as landed? This will close the active flight for ${ac.tail_number}.`)) return;
+            try {
+                await API.closeFlight(flight.id);
+                Utils.toast('Flight marked as landed', 'success');
+                await this.loadAircraft();
+            } catch (err) {
+                Utils.toast(err.message || 'Failed to close flight', 'error');
+            }
+        });
+
         menu.querySelector('.btn-add-flight-for').addEventListener('click', (e) => {
             e.stopPropagation();
             menu.remove();

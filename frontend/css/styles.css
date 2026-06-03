@@ -935,6 +935,19 @@ input:checked + .slider:before {
     margin: 6px 0;
 }
 
+.aircraft-dropdown-menu .dropdown-item.warning-item {
+    color: var(--amber, #f59e0b);
+}
+
+.aircraft-dropdown-menu .dropdown-item.warning-item:hover {
+    background: rgba(245, 158, 11, 0.12);
+    color: var(--amber, #f59e0b);
+}
+
+.aircraft-dropdown-menu .dropdown-item.warning-item svg {
+    color: var(--amber, #f59e0b);
+}
+
 
 /* --- Telemetry Auditor Workspace --- */
 .modal-auditor {

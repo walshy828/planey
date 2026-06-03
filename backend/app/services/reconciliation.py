@@ -543,13 +543,15 @@ class ReconciliationService:
         PLANE_STALE_MINS = 30
 
         # Hard failsafe: force-close when external reconciliation returns no data
-        # (covers VFR flights, helicopter hops, and stale FR24/FA records)
-        HELI_FORCE_CLOSE_MINS = 60
+        # (covers VFR flights, helicopter hops, and stale FR24/FA records).
+        # Helicopters use a short threshold because VFR hops are typically ≤30 min
+        # and have no FA/FR24 data, so no-data after 25 min means almost certainly landed.
+        HELI_FORCE_CLOSE_MINS = 25
         PLANE_FORCE_CLOSE_MINS = 120
 
         # Hard failsafe: force-close even when external source says "active"
-        # (covers cases where FR24/FA lags hours behind reality)
-        HELI_FORCE_CLOSE_HARD_MINS = 120
+        # (covers cases where FR24/FA lags behind reality)
+        HELI_FORCE_CLOSE_HARD_MINS = 60
         PLANE_FORCE_CLOSE_HARD_MINS = 240
 
         now = datetime.now(timezone.utc)

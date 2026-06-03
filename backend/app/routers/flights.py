@@ -350,6 +350,70 @@ async def delete_flight(
     await db.delete(flight)
     logger.info(f"Deleted flight: {flight.flight_number}")
 
+@router.post("/{flight_id}/close", response_model=FlightResponse)
+async def close_flight(
+    flight_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Manually close (land) an active or scheduled flight with full side-effects."""
+    result = await db.execute(select(Flight).where(Flight.id == flight_id))
+    flight = result.scalars().first()
+    if not flight:
+        raise HTTPException(status_code=404, detail="Flight not found")
+
+    if flight.status in ["landed", "cancelled"]:
+        raise HTTPException(status_code=400, detail=f"Flight is already {flight.status}")
+
+    from app.models import record_flight_changes
+    from app.services.websocket import ws_manager
+    from app.services.stats_calculator import calculate_flight_stats
+
+    old_status = flight.status
+    now = datetime.now(timezone.utc)
+
+    updates = {"status": "landed", "actual_arrival": str(now)}
+    await record_flight_changes(flight, updates, "manual_close", db)
+
+    flight.status = "landed"
+    flight.actual_arrival = now
+
+    try:
+        flight.summary_stats = await calculate_flight_stats(flight, db)
+    except Exception as e:
+        logger.warning(f"Stats calculation failed for manual close of {flight.id}: {e}")
+
+    await db.commit()
+    await db.refresh(flight)
+
+    # Notify Home Assistant
+    ac_result = await db.execute(select(Aircraft).where(Aircraft.id == flight.aircraft_id))
+    aircraft = ac_result.scalars().first()
+    if aircraft:
+        from app.services.reconciliation import reconciliation_service
+        await reconciliation_service._notify_ha(aircraft, flight)
+
+    # Broadcast via WebSocket
+    await ws_manager.broadcast({
+        "type": "flight_status",
+        "flight_id": str(flight.id),
+        "aircraft_id": str(flight.aircraft_id),
+        "old_status": old_status,
+        "new_status": "landed",
+        "summary_stats": flight.summary_stats,
+    })
+
+    # Clean up any in-memory landing state in the tracker
+    try:
+        from app.services.tracker import tracker_service
+        tracker_service._landing_states.pop(str(flight_id), None)
+        await tracker_service.update_tracker_polling_interval(db)
+    except Exception as e:
+        logger.warning(f"Could not update tracker state after manual close: {e}")
+
+    logger.info(f"Manually closed flight {flight.flight_number or flight.id}")
+    return FlightResponse.model_validate(flight)
+
+
 @router.post("/{flight_id}/reconcile")
 async def reconcile_flight_endpoint(
     flight_id: uuid.UUID,

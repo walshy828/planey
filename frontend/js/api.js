@@ -53,6 +53,7 @@ const API = {
     updateFlight(id, data) { return this.put(`/flights/${id}`, data); },
     deleteFlight(id) { return this.del(`/flights/${id}`); },
     mergeFlights(targetId, sourceId) { return this.post(`/flights/${targetId}/merge/${sourceId}`, {}); },
+    closeFlight(id) { return this.post(`/flights/${id}/close`); },
 
     // ── Positions ──
     getLatestPositions() { return this.get('/positions/latest'); },
