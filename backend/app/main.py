@@ -80,12 +80,25 @@ async def lifespan(app: FastAPI):
         # Check active flights
         res_active = await session.execute(select(Flight).where(Flight.status == 'active'))
         has_active = res_active.scalars().first() is not None
-        
-        is_airborne_mode = has_active or manual_airborne
+
+        # Check for imminent scheduled departures (15 min before / 30 min after)
+        from datetime import datetime, timezone, timedelta
+        _now = datetime.now(timezone.utc)
+        res_imminent = await session.execute(
+            select(Flight).where(
+                Flight.status == 'scheduled',
+                Flight.scheduled_departure >= _now - timedelta(minutes=30),
+                Flight.scheduled_departure <= _now + timedelta(minutes=15),
+            )
+        )
+        has_imminent = res_imminent.scalars().first() is not None
+
+        is_airborne_mode = has_active or manual_airborne or has_imminent
         target_interval = poll_interval if is_airborne_mode else passive_interval
         tracker_service.is_airborne_mode = is_airborne_mode
         tracker_service.current_interval = target_interval
-        logger.info(f"Startup polling mode: {'Airborne' if is_airborne_mode else 'Passive'} (interval={target_interval}s)")
+        reason = "Active Flight" if has_active else "Imminent Scheduled Flight" if has_imminent else "Manual Override" if manual_airborne else "Passive"
+        logger.info(f"Startup polling mode: {'Airborne' if is_airborne_mode else 'Passive'} ({reason}, interval={target_interval}s)")
 
     # Schedule tracking poll
     scheduler.add_job(

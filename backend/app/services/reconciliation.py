@@ -452,20 +452,20 @@ class ReconciliationService:
         session: AsyncSession,
     ) -> None:
         """
-        Close a flight directly using its last known on-ground position.
-        Used when we're confident the aircraft has landed (last position was
-        on-ground and old enough) without needing an external API call.
+        Close a flight directly using its last known position (or now if no position).
+        Used when we're confident the aircraft has landed without needing an external API call.
+        last_pos may be None for flights that never received position data.
         """
         from app.models import Position, record_flight_changes
         from app.services.websocket import ws_manager
 
-        landing_time = last_pos.timestamp
+        landing_time = last_pos.timestamp if last_pos else datetime.now(timezone.utc)
         if landing_time.tzinfo is None:
             landing_time = landing_time.replace(tzinfo=timezone.utc)
 
         updates: dict = {"status": "landed", "actual_arrival": str(landing_time)}
 
-        if not flight.arrival_iata and not flight.arrival_name:
+        if not flight.arrival_iata and not flight.arrival_name and last_pos:
             try:
                 arrival_name = await geocoder.get_location_name(last_pos.latitude, last_pos.longitude)
                 if arrival_name:
@@ -504,7 +504,8 @@ class ReconciliationService:
 
         logger.info(
             f"Direct close: flight {flight.flight_number or flight.id} "
-            f"({aircraft.tail_number if aircraft else '?'}) landed at {landing_time.isoformat()}"
+            f"({'no position' if not last_pos else aircraft.tail_number if aircraft else '?'}) "
+            f"landed at {landing_time.isoformat()}"
         )
 
     async def run_reconciliation_job(self):
@@ -513,19 +514,21 @@ class ReconciliationService:
 
         Three closure paths per flight, chosen by last-position state:
 
-        1. Last position was on-ground (tracker state lost after restart / brief coverage gap):
+        1. Last position was on-ground:
            Close directly — no external API call.
            Thresholds: helicopter ≥ 8 min on-ground, plane ≥ 15 min on-ground.
 
-        2. Last position was airborne (or no positions at all):
-           Call reconcile_flight() which checks FR24/FA.
-           Thresholds: helicopter ≥ 15 min stale, plane ≥ 30 min stale.
+        2a. Helicopter, last position airborne (or no positions at all):
+            Close directly after 15 min — helicopters are VFR and don't appear in
+            FA/FR24, so external API calls just delay closure.
 
-        3. Hard failsafe — force-close regardless of external API result:
-           Triggered when reconciliation fails (no external data, e.g. VFR/helicopter) or
-           the external source still reports "active" but position data is very old.
-           Thresholds: failed → heli ≥ 60 min, plane ≥ 120 min.
-                       skipped (external says active) → heli ≥ 120 min, plane ≥ 240 min.
+        2b. Plane, last position airborne (or no positions at all):
+            Call reconcile_flight() which checks FR24/FA.
+            Threshold: plane ≥ 30 min stale.
+
+        3. Plane hard failsafe — force-close regardless of external API result:
+           Thresholds: failed → plane ≥ 120 min.
+                       skipped (external says active) → plane ≥ 240 min.
 
         APScheduler's max_instances=1 prevents concurrent runs; the per-flight 10-min
         recency guard inside reconcile_flight() prevents premature closure.
@@ -538,20 +541,15 @@ class ReconciliationService:
         HELI_GROUND_CLOSE_MINS = 8
         PLANE_GROUND_CLOSE_MINS = 15
 
-        # Minutes of no-position staleness before external reconciliation
+        # Helicopter: direct close after this many minutes with no new positions
+        # (VFR/no FA data — skip external API entirely)
         HELI_STALE_MINS = 15
+
+        # Plane: try external reconciliation after this many minutes of no positions
         PLANE_STALE_MINS = 30
 
-        # Hard failsafe: force-close when external reconciliation returns no data
-        # (covers VFR flights, helicopter hops, and stale FR24/FA records).
-        # Helicopters use a short threshold because VFR hops are typically ≤30 min
-        # and have no FA/FR24 data, so no-data after 25 min means almost certainly landed.
-        HELI_FORCE_CLOSE_MINS = 25
+        # Plane hard failsafe thresholds (helicopters don't need these)
         PLANE_FORCE_CLOSE_MINS = 120
-
-        # Hard failsafe: force-close even when external source says "active"
-        # (covers cases where FR24/FA lags behind reality)
-        HELI_FORCE_CLOSE_HARD_MINS = 60
         PLANE_FORCE_CLOSE_HARD_MINS = 240
 
         now = datetime.now(timezone.utc)
@@ -575,8 +573,6 @@ class ReconciliationService:
 
                     ground_close_mins = HELI_GROUND_CLOSE_MINS if is_heli else PLANE_GROUND_CLOSE_MINS
                     stale_mins = HELI_STALE_MINS if is_heli else PLANE_STALE_MINS
-                    force_close_mins = HELI_FORCE_CLOSE_MINS if is_heli else PLANE_FORCE_CLOSE_MINS
-                    force_close_hard_mins = HELI_FORCE_CLOSE_HARD_MINS if is_heli else PLANE_FORCE_CLOSE_HARD_MINS
 
                     # Last position for this specific flight
                     pos_res = await session.execute(
@@ -604,35 +600,38 @@ class ReconciliationService:
                             continue
 
                         if age_mins >= stale_mins:
-                            # Airborne and stale — try external reconciliation
-                            logger.info(
-                                f"Flight {flight.flight_number or flight.id} stale "
-                                f"{age_mins:.0f} min (threshold {stale_mins}) — attempting reconciliation"
-                            )
-                            recon_result = await self.reconcile_flight(str(flight.id), session)
-                            await asyncio.sleep(1)
+                            if is_heli:
+                                # Helicopters: close directly — VFR, no FA/FR24 data available
+                                logger.info(
+                                    f"Helicopter {flight.flight_number or flight.id} stale "
+                                    f"{age_mins:.0f} min (threshold {stale_mins}) — "
+                                    f"closing directly (VFR, no external data)"
+                                )
+                                await self._close_flight_direct(flight, last_pos, ac, session)
+                            else:
+                                # Planes: try external reconciliation first
+                                logger.info(
+                                    f"Flight {flight.flight_number or flight.id} stale "
+                                    f"{age_mins:.0f} min (threshold {stale_mins}) — attempting reconciliation"
+                                )
+                                recon_result = await self.reconcile_flight(str(flight.id), session)
+                                await asyncio.sleep(1)
 
-                            # Hard failsafe: if external reconciliation couldn't resolve the
-                            # flight and the position is very old, force-close it directly.
-                            # This handles VFR/helicopter flights with no FA/FR24 data and
-                            # cases where the external source lags hours behind reality.
-                            recon_status = recon_result.get("status")
-                            if recon_status == "failed" and age_mins >= force_close_mins:
-                                logger.warning(
-                                    f"Force-closing flight {flight.flight_number or flight.id} "
-                                    f"({ac.tail_number if ac else '?'}): no external data found "
-                                    f"and last position is {age_mins:.0f} min old"
-                                )
-                                await self._close_flight_direct(flight, last_pos, ac, session)
-                            elif recon_status == "skipped" and age_mins >= force_close_hard_mins:
-                                # External source still says "active" but position is extremely
-                                # old — the external source is almost certainly stale at this point.
-                                logger.warning(
-                                    f"Force-closing flight {flight.flight_number or flight.id} "
-                                    f"({ac.tail_number if ac else '?'}): external source says "
-                                    f"active but last position is {age_mins:.0f} min old"
-                                )
-                                await self._close_flight_direct(flight, last_pos, ac, session)
+                                recon_status = recon_result.get("status")
+                                if recon_status == "failed" and age_mins >= PLANE_FORCE_CLOSE_MINS:
+                                    logger.warning(
+                                        f"Force-closing flight {flight.flight_number or flight.id} "
+                                        f"({ac.tail_number if ac else '?'}): no external data found "
+                                        f"and last position is {age_mins:.0f} min old"
+                                    )
+                                    await self._close_flight_direct(flight, last_pos, ac, session)
+                                elif recon_status == "skipped" and age_mins >= PLANE_FORCE_CLOSE_HARD_MINS:
+                                    logger.warning(
+                                        f"Force-closing flight {flight.flight_number or flight.id} "
+                                        f"({ac.tail_number if ac else '?'}): external source says "
+                                        f"active but last position is {age_mins:.0f} min old"
+                                    )
+                                    await self._close_flight_direct(flight, last_pos, ac, session)
                     else:
                         # No positions at all — use flight creation time as age proxy
                         created = flight.created_at
@@ -640,41 +639,31 @@ class ReconciliationService:
                             created = created.replace(tzinfo=timezone.utc)
                         created_age_mins = (now - created).total_seconds() / 60
                         if created_age_mins >= stale_mins:
-                            logger.info(
-                                f"Flight {flight.flight_number or flight.id} has no positions "
-                                f"and is {created_age_mins:.0f} min old — attempting reconciliation"
-                            )
-                            recon_result = await self.reconcile_flight(str(flight.id), session)
-                            await asyncio.sleep(1)
+                            if is_heli:
+                                # Helicopters: close directly — no point calling FA/FR24
+                                logger.info(
+                                    f"Helicopter {flight.flight_number or flight.id} has no positions "
+                                    f"and is {created_age_mins:.0f} min old — closing directly"
+                                )
+                                await self._close_flight_direct(flight, None, ac, session)
+                            else:
+                                logger.info(
+                                    f"Flight {flight.flight_number or flight.id} has no positions "
+                                    f"and is {created_age_mins:.0f} min old — attempting reconciliation"
+                                )
+                                recon_result = await self.reconcile_flight(str(flight.id), session)
+                                await asyncio.sleep(1)
 
-                            # Hard failsafe for position-less flights: if external reconciliation
-                            # failed and the flight has been open long enough, force-close it.
-                            recon_status = recon_result.get("status")
-                            if recon_status in ("failed", "skipped") and created_age_mins >= force_close_hard_mins:
-                                logger.warning(
-                                    f"Force-closing position-less flight "
-                                    f"{flight.flight_number or flight.id} "
-                                    f"({ac.tail_number if ac else '?'}): "
-                                    f"external reconciliation {recon_status} after "
-                                    f"{created_age_mins:.0f} min"
-                                )
-                                close_time = datetime.now(timezone.utc)
-                                updates = {"status": "landed", "actual_arrival": str(close_time)}
-                                await record_flight_changes(
-                                    flight, updates, "reconciliation_force_close", session
-                                )
-                                flight.status = "landed"
-                                flight.actual_arrival = close_time
-                                if ac:
-                                    await self._notify_ha(ac, flight)
-                                await session.commit()
-                                await ws_manager.broadcast({
-                                    "type": "flight_status",
-                                    "flight_id": str(flight.id),
-                                    "aircraft_id": str(flight.aircraft_id),
-                                    "old_status": "active",
-                                    "new_status": "landed",
-                                })
+                                recon_status = recon_result.get("status")
+                                if recon_status in ("failed", "skipped") and created_age_mins >= PLANE_FORCE_CLOSE_HARD_MINS:
+                                    logger.warning(
+                                        f"Force-closing position-less flight "
+                                        f"{flight.flight_number or flight.id} "
+                                        f"({ac.tail_number if ac else '?'}): "
+                                        f"external reconciliation {recon_status} after "
+                                        f"{created_age_mins:.0f} min"
+                                    )
+                                    await self._close_flight_direct(flight, None, ac, session)
 
                 except Exception as e:
                     logger.error(

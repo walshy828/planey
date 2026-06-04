@@ -1133,7 +1133,7 @@ class TrackerService:
             # Check for active flights
             result_active = await db.execute(select(Flight).where(Flight.status == "active"))
             has_active_flights = result_active.scalars().first() is not None
-            
+
             # Handle manual airborne mode timeout (30 minutes)
             if manual_airborne and not has_active_flights:
                 if manual_set_at_str:
@@ -1143,11 +1143,11 @@ class TrackerService:
                             set_at = set_at.replace(tzinfo=timezone.utc)
                         else:
                             set_at = set_at.astimezone(timezone.utc)
-                        
+
                         if (now - set_at) >= timedelta(minutes=30):
                             logger.info("30 minutes elapsed in manual airborne mode with no active flights. Reverting to passive mode.")
                             manual_airborne = False
-                            
+
                             # Update setting in DB
                             res_mode = await db.execute(select(Setting).where(Setting.key == 'manual_airborne_mode'))
                             mode_setting = res_mode.scalars().first()
@@ -1158,25 +1158,55 @@ class TrackerService:
                             await db.commit()
                     except Exception as parse_err:
                         logger.error(f"Failed to parse manual_airborne_mode_set_at: {parse_err}")
-            
-            is_airborne_mode = has_active_flights or manual_airborne
+
+            # Check for imminent scheduled departures: switch to airborne mode 15 min before
+            # the scheduled departure and stay in airborne mode for up to 30 min after, so the
+            # initial takeoff positions have a better chance of being captured. Once actual
+            # positions are detected the flight goes active and this window no longer applies.
+            IMMINENT_PRE_WINDOW_MINS = 15
+            IMMINENT_POST_WINDOW_MINS = 30
+            imminent_window_start = now - timedelta(minutes=IMMINENT_POST_WINDOW_MINS)
+            imminent_window_end = now + timedelta(minutes=IMMINENT_PRE_WINDOW_MINS)
+            result_imminent = await db.execute(
+                select(Flight).where(
+                    Flight.status == "scheduled",
+                    Flight.scheduled_departure >= imminent_window_start,
+                    Flight.scheduled_departure <= imminent_window_end,
+                )
+            )
+            imminent_flight = result_imminent.scalars().first()
+            has_imminent_flight = imminent_flight is not None
+
+            is_airborne_mode = has_active_flights or manual_airborne or has_imminent_flight
             target_interval = airborne_interval if is_airborne_mode else passive_interval
-            
+
+            if has_imminent_flight and not has_active_flights and not manual_airborne:
+                logger.debug(
+                    f"Imminent scheduled flight {imminent_flight.flight_number or imminent_flight.id} "
+                    f"(departs {imminent_flight.scheduled_departure}) — using airborne polling interval"
+                )
+
             self.is_airborne_mode = is_airborne_mode
             self.current_interval = target_interval
             await self._broadcast_tracker_status()
-            
+
             # Reschedule the job
             from app.main import scheduler
             job = scheduler.get_job("poll_positions")
             if job:
                 current_interval = job.trigger.interval.total_seconds()
                 if int(current_interval) != target_interval:
+                    reason = (
+                        "Active Flight" if has_active_flights
+                        else "Imminent Scheduled Flight" if has_imminent_flight
+                        else "Manual Override" if manual_airborne
+                        else "All Grounded/Timeout"
+                    )
                     scheduler.reschedule_job("poll_positions", trigger="interval", seconds=target_interval)
                     logger.info(
                         f"Dynamic Polling Interval Adjustment: Switched to "
                         f"{'Airborne' if is_airborne_mode else 'Passive'} mode. "
-                        f"Reason: {'Active Flight' if has_active_flights else 'Manual Override' if manual_airborne else 'All Grounded/Timeout'}. "
+                        f"Reason: {reason}. "
                         f"Rescheduled 'poll_positions' from {int(current_interval)}s to {target_interval}s."
                     )
             else:
