@@ -1757,6 +1757,22 @@ input:checked + .slider:before {
     color: var(--accent);
     margin-top: 3px;
 }
+.ac-telem-dist {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    margin-top: 6px;
+    padding-top: 5px;
+    border-top: 1px solid rgba(0,212,255,0.1);
+}
+.ac-telem-dist .ac-telem-label {
+    flex-shrink: 0;
+}
+.ac-dist-nm {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-family: var(--mono);
+}
 .ac-telem-footer {
     display: flex;
     justify-content: space-between;

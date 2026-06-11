@@ -95,6 +95,8 @@ async def init_db():
                 await conn.execute(text("ALTER TABLE aircraft ADD COLUMN IF NOT EXISTS ntfy_on_scheduled BOOLEAN NOT NULL DEFAULT false;"))
                 await conn.execute(text("ALTER TABLE aircraft ADD COLUMN IF NOT EXISTS ntfy_on_departed BOOLEAN NOT NULL DEFAULT false;"))
                 await conn.execute(text("ALTER TABLE aircraft ADD COLUMN IF NOT EXISTS ntfy_on_landed BOOLEAN NOT NULL DEFAULT false;"))
+                # Self-healing: add running distance accumulator for active flights
+                await conn.execute(text("ALTER TABLE flights ADD COLUMN IF NOT EXISTS distance_nm FLOAT DEFAULT 0.0;"))
             logger.info("Database initialized successfully")
             return
         except Exception as e:

@@ -148,6 +148,7 @@ class FlightResponse(BaseModel):
     status: str
     gate_info: Optional[dict] = None
     summary_stats: Optional[dict] = None
+    distance_nm: Optional[float] = None
     created_at: datetime
     updated_at: datetime
     position_count: int = 0

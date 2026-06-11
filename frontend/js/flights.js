@@ -463,6 +463,10 @@ const Flights = {
                         : `${Math.round(pos.altitude_ft).toLocaleString()} ft`)
                     : '—';
                 const vsStr = Utils.formatVRate(pos.vertical_rate_fpm);
+                const distNm = flight && flight.distance_nm != null ? flight.distance_nm : null;
+                const distSm = distNm != null ? distNm * 1.15078 : null;
+                const distStr = distSm != null ? `${Math.round(distSm)} mi` : '—';
+                const distNmStr = distNm != null ? `${Math.round(distNm)} NM` : '';
                 telemHtml = `<div class="ac-telemetry">
                     <div class="ac-telem-grid">
                         <div class="ac-telem-item">
@@ -481,6 +485,11 @@ const Flights = {
                             <span class="ac-telem-label">V/S</span>
                             <span class="ac-telem-val">${vsStr}</span>
                         </div>
+                    </div>
+                    <div class="ac-telem-dist">
+                        <span class="ac-telem-label">Traveled</span>
+                        <span class="ac-telem-val ac-dist-sm">${distStr}</span>
+                        ${distNmStr ? `<span class="ac-dist-nm">${distNmStr}</span>` : ''}
                     </div>
                     <div class="ac-telem-footer">
                         <span>Updated <span class="live-time-ago" data-timestamp="${pos.timestamp}">${Utils.timeAgo(pos.timestamp)}</span></span>
@@ -1445,12 +1454,20 @@ const Flights = {
                 : `${Math.round(pos.altitude_ft).toLocaleString()} ft`)
             : '—';
 
-        const vals = telemEl.querySelectorAll('.ac-telem-val');
+        const vals = telemEl.querySelectorAll('.ac-telem-grid .ac-telem-val');
         if (vals.length >= 4) {
             vals[0].textContent = altStr;
             vals[1].textContent = Utils.formatSpeed(pos.ground_speed_kts);
             vals[2].textContent = Utils.formatHeading(pos.heading);
             vals[3].textContent = Utils.formatVRate(pos.vertical_rate_fpm);
+        }
+
+        // Update distance row if broadcast includes it
+        if (pos.distance_sm != null) {
+            const distSmEl = telemEl.querySelector('.ac-dist-sm');
+            const distNmEl = telemEl.querySelector('.ac-dist-nm');
+            if (distSmEl) distSmEl.textContent = `${Math.round(pos.distance_sm)} mi`;
+            if (distNmEl && pos.distance_nm != null) distNmEl.textContent = `${Math.round(pos.distance_nm)} NM`;
         }
 
         const liveTime = telemEl.querySelector('.live-time-ago');

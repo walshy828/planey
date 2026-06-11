@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session
 from app.models import Aircraft, Flight, Position, record_flight_changes
+from app.services.stats_calculator import haversine_distance
 from app.services.opensky import opensky_client
 from app.services.flightradar import fr24_client
 from app.services.flightaware import fa_client
@@ -580,6 +581,19 @@ class TrackerService:
                         logger.warning(f"Skipping position for {aircraft.tail_number}: timestamp {sv.timestamp} outside flight {active_flight.flight_number} range.")
                         continue
 
+                    # Accumulate incremental distance for active flight
+                    prev_pos_result = await session.execute(
+                        select(Position)
+                        .where(Position.flight_id == active_flight.id)
+                        .order_by(Position.timestamp.desc())
+                        .limit(1)
+                    )
+                    prev_pos = prev_pos_result.scalars().first()
+                    if prev_pos:
+                        delta_nm = haversine_distance(prev_pos.latitude, prev_pos.longitude, sv.latitude, sv.longitude)
+                        if delta_nm < 150.0:
+                            active_flight.distance_nm = (active_flight.distance_nm or 0.0) + delta_nm
+
                     # Store position
                     position = Position(
                         aircraft_id=aircraft.id,
@@ -951,6 +965,8 @@ class TrackerService:
 
     async def _broadcast_position(self, aircraft: Aircraft, position: Position, flight: Optional[Flight]):
         """Broadcast position update via WebSocket."""
+        distance_nm = round(flight.distance_nm, 1) if flight and flight.distance_nm else None
+        distance_sm = round(flight.distance_nm * 1.15078, 1) if flight and flight.distance_nm else None
         await ws_manager.broadcast({
             "type": "position_update",
             "aircraft_id": str(aircraft.id),
@@ -967,6 +983,8 @@ class TrackerService:
                 "on_ground": position.on_ground,
                 "squawk": position.squawk,
                 "timestamp": position.timestamp.isoformat() if position.timestamp else None,
+                "distance_nm": distance_nm,
+                "distance_sm": distance_sm,
             },
         })
 
@@ -1011,6 +1029,8 @@ class TrackerService:
 
     async def _update_ha(self, aircraft: Aircraft, position: Position, flight: Optional[Flight]):
         """Update Home Assistant sensor for this aircraft."""
+        from app.services.geocoder import abbreviate_location
+
         flight_data = None
         if flight:
             flight_data = {
@@ -1020,6 +1040,8 @@ class TrackerService:
                 "departure_name": flight.departure_name,
                 "arrival_iata": flight.arrival_iata,
                 "arrival_name": flight.arrival_name,
+                "arrival_lat": flight.arrival_lat,
+                "arrival_lon": flight.arrival_lon,
                 "scheduled_departure": flight.scheduled_departure.isoformat() if flight.scheduled_departure else None,
                 "scheduled_arrival": flight.scheduled_arrival.isoformat() if flight.scheduled_arrival else None,
                 "actual_departure": flight.actual_departure.isoformat() if flight.actual_departure else None,
@@ -1039,6 +1061,8 @@ class TrackerService:
             "on_ground": position.on_ground,
             "squawk": position.squawk,
             "timestamp": position.timestamp.isoformat() if position.timestamp else None,
+            "location_name": position.location_name,
+            "location_city_state": abbreviate_location(position.location_name) if position.location_name else None,
         }
 
         status_str = ha_service.build_status_string(
@@ -1062,7 +1086,28 @@ class TrackerService:
 
     async def _update_ha_no_position(self, aircraft: Aircraft, session: AsyncSession):
         """Update HA when we have no position data (aircraft not broadcasting)."""
+        from app.services.geocoder import abbreviate_location
+
         active_flight = await self._get_active_flight(aircraft.id, datetime.now(timezone.utc), session)
+
+        # Always include last known position so HA attributes have lat/lon/location
+        last_pos_res = await session.execute(
+            select(Position)
+            .where(Position.aircraft_id == aircraft.id)
+            .order_by(Position.timestamp.desc())
+            .limit(1)
+        )
+        last_pos = last_pos_res.scalars().first()
+        position_data = None
+        if last_pos:
+            position_data = {
+                "latitude": last_pos.latitude,
+                "longitude": last_pos.longitude,
+                "on_ground": last_pos.on_ground,
+                "timestamp": last_pos.timestamp.isoformat() if last_pos.timestamp else None,
+                "location_name": last_pos.location_name,
+                "location_city_state": abbreviate_location(last_pos.location_name) if last_pos.location_name else None,
+            }
 
         flight_data = None
         if active_flight:
@@ -1073,6 +1118,8 @@ class TrackerService:
                 "departure_name": active_flight.departure_name,
                 "arrival_iata": active_flight.arrival_iata,
                 "arrival_name": active_flight.arrival_name,
+                "arrival_lat": active_flight.arrival_lat,
+                "arrival_lon": active_flight.arrival_lon,
                 "scheduled_departure": active_flight.scheduled_departure.isoformat() if active_flight.scheduled_departure else None,
                 "scheduled_arrival": active_flight.scheduled_arrival.isoformat() if active_flight.scheduled_arrival else None,
                 "actual_departure": active_flight.actual_departure.isoformat() if active_flight.actual_departure else None,
@@ -1093,12 +1140,51 @@ class TrackerService:
                 flight_status=active_flight.status,
             )
         else:
+            # No active flight — check last landed flight for arrival airport context
+            last_landed_res = await session.execute(
+                select(Flight)
+                .where(
+                    Flight.aircraft_id == aircraft.id,
+                    Flight.status == "landed",
+                    Flight.actual_arrival.isnot(None),
+                )
+                .order_by(Flight.actual_arrival.desc())
+                .limit(1)
+            )
+            last_landed = last_landed_res.scalars().first()
+            if last_landed:
+                flight_data = {
+                    "flight_number": last_landed.flight_number,
+                    "callsign": last_landed.callsign,
+                    "departure_iata": last_landed.departure_iata,
+                    "departure_name": last_landed.departure_name,
+                    "arrival_iata": last_landed.arrival_iata,
+                    "arrival_name": last_landed.arrival_name,
+                    "arrival_lat": last_landed.arrival_lat,
+                    "arrival_lon": last_landed.arrival_lon,
+                    "actual_departure": last_landed.actual_departure.isoformat() if last_landed.actual_departure else None,
+                    "actual_arrival": last_landed.actual_arrival.isoformat() if last_landed.actual_arrival else None,
+                    "aircraft_type": aircraft.aircraft_type,
+                    "airline": aircraft.airline,
+                    "status": last_landed.status,
+                }
+                # If no position record at all, use arrival airport coordinates
+                if not position_data and last_landed.arrival_lat:
+                    position_data = {
+                        "latitude": last_landed.arrival_lat,
+                        "longitude": last_landed.arrival_lon,
+                        "on_ground": True,
+                        "location_airport_name": last_landed.arrival_name,
+                        "location_city_state": abbreviate_location(last_landed.arrival_name) if last_landed.arrival_name else None,
+                    }
+
             status_str = ha_service.build_status_string(on_ground=True)
 
         await ha_service.update_aircraft_sensor(
             tail_number=aircraft.tail_number,
             status=status_str,
             flight_data=flight_data,
+            position_data=position_data,
         )
 
     async def update_tracker_polling_interval(self, db: AsyncSession = None):

@@ -84,11 +84,13 @@ class HomeAssistantService:
                 "on_ground": position_data.get("on_ground", False),
                 "squawk": position_data.get("squawk"),
                 "location_name": position_data.get("location_name"),
+                "location_city_state": position_data.get("location_city_state"),
                 "last_updated": position_data.get("timestamp"),
             })
 
         # Add flight attributes
         if flight_data:
+            flight_status = flight_data.get("status")
             attributes.update({
                 "flight_number": flight_data.get("flight_number"),
                 "callsign": flight_data.get("callsign"),
@@ -102,8 +104,20 @@ class HomeAssistantService:
                 "actual_arrival": flight_data.get("actual_arrival"),
                 "aircraft_type": flight_data.get("aircraft_type"),
                 "airline": flight_data.get("airline"),
-                "flight_status": flight_data.get("status"),
+                "flight_status": flight_status,
             })
+
+            # location_airport: show where the aircraft currently is or last was
+            if flight_status == "landed":
+                attributes["location_airport"] = flight_data.get("arrival_iata")
+                attributes["location_airport_name"] = flight_data.get("arrival_name")
+                # If no live position was provided, fall back to arrival airport coordinates
+                if not position_data and flight_data.get("arrival_lat"):
+                    attributes["latitude"] = flight_data["arrival_lat"]
+                    attributes["longitude"] = flight_data["arrival_lon"]
+            else:
+                attributes["location_airport"] = flight_data.get("departure_iata")
+                attributes["location_airport_name"] = flight_data.get("departure_name")
 
         # Remove None values from attributes
         attributes = {k: v for k, v in attributes.items() if v is not None}

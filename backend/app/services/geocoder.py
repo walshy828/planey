@@ -4,6 +4,34 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+US_STATE_ABBR = {
+    "Alabama": "AL", "Alaska": "AK", "Arizona": "AZ", "Arkansas": "AR",
+    "California": "CA", "Colorado": "CO", "Connecticut": "CT", "Delaware": "DE",
+    "Florida": "FL", "Georgia": "GA", "Hawaii": "HI", "Idaho": "ID",
+    "Illinois": "IL", "Indiana": "IN", "Iowa": "IA", "Kansas": "KS",
+    "Kentucky": "KY", "Louisiana": "LA", "Maine": "ME", "Maryland": "MD",
+    "Massachusetts": "MA", "Michigan": "MI", "Minnesota": "MN", "Mississippi": "MS",
+    "Missouri": "MO", "Montana": "MT", "Nebraska": "NE", "Nevada": "NV",
+    "New Hampshire": "NH", "New Jersey": "NJ", "New Mexico": "NM", "New York": "NY",
+    "North Carolina": "NC", "North Dakota": "ND", "Ohio": "OH", "Oklahoma": "OK",
+    "Oregon": "OR", "Pennsylvania": "PA", "Rhode Island": "RI", "South Carolina": "SC",
+    "South Dakota": "SD", "Tennessee": "TN", "Texas": "TX", "Utah": "UT",
+    "Vermont": "VT", "Virginia": "VA", "Washington": "WA", "West Virginia": "WV",
+    "Wisconsin": "WI", "Wyoming": "WY", "District of Columbia": "DC",
+}
+
+
+def abbreviate_location(location_name: str) -> Optional[str]:
+    """Convert 'City, Full State Name' to 'City, ST' for US locations."""
+    if not location_name or ", " not in location_name:
+        return location_name
+    city, state = location_name.rsplit(", ", 1)
+    abbr = US_STATE_ABBR.get(state.strip())
+    if abbr:
+        return f"{city}, {abbr}"
+    return location_name
+
+
 class GeocoderService:
     """Service for reverse geocoding GPS coordinates to city/state names."""
     
