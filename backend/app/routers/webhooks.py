@@ -114,6 +114,8 @@ async def webhook_flight_filed(
             existing.scheduled_departure = payload.scheduled_departure or existing.scheduled_departure
             existing.scheduled_arrival = payload.scheduled_arrival or existing.scheduled_arrival
             existing.expected_route = payload.expected_route or existing.expected_route
+            # Mark as webhook-sourced so schedule_sync won't auto-cancel it
+            existing.raw_data = {**(existing.raw_data or {}), "source": "webhook_filed"}
             
             # Re-geocode the airports if details changed
             from app.services.geocoder import geocoder
@@ -152,7 +154,8 @@ async def webhook_flight_filed(
         scheduled_departure=payload.scheduled_departure,
         scheduled_arrival=payload.scheduled_arrival,
         expected_route=payload.expected_route,
-        status="scheduled"
+        status="scheduled",
+        raw_data={"source": "webhook_filed"},
     )
     db.add(new_flight)
     await db.commit()

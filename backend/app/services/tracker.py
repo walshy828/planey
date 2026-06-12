@@ -287,6 +287,17 @@ class TrackerService:
                                 continue
                             if ex.scheduled_departure and ex.scheduled_departure > cancel_cutoff:
                                 continue  # too far out — don't cancel speculatively
+                            # Protect flights created by webhook — ad hoc VFR/private flights
+                            # don't appear in FA's upcoming-flights API, so they would always
+                            # be falsely cancelled. The webhook itself comes from FA email alerts
+                            # and is authoritative for these operations.
+                            if ex.raw_data and ex.raw_data.get("source") == "webhook_filed":
+                                logger.info(
+                                    f"Schedule sync: protecting webhook-filed flight "
+                                    f"{ex.flight_number or ex.id} for {ac.tail_number} "
+                                    f"from auto-cancellation"
+                                )
+                                continue
                             await record_flight_changes(
                                 ex, {"status": "cancelled"}, "schedule_sync", session
                             )
@@ -703,6 +714,49 @@ class TrackerService:
                             session,
                         )
                         return reopen_candidate
+
+            # Before auto-creating a bare flight, check for a recently-cancelled
+            # webhook-filed scheduled flight whose departure time is close to now.
+            # This handles the race where sync_flight_schedules cancelled the
+            # webhook flight moments before takeoff was detected.
+            cancelled_res = await session.execute(
+                select(Flight)
+                .where(
+                    Flight.aircraft_id == aircraft.id,
+                    Flight.status == "cancelled",
+                    Flight.scheduled_departure.isnot(None),
+                )
+                .order_by(Flight.scheduled_departure.desc())
+                .limit(5)
+            )
+            for cand in cancelled_res.scalars().all():
+                sched = cand.scheduled_departure
+                if sched.tzinfo is None:
+                    sched = sched.replace(tzinfo=timezone.utc)
+                gap_secs = abs((ts_aware - sched).total_seconds())
+                if (
+                    gap_secs <= 2 * 3600
+                    and cand.raw_data
+                    and cand.raw_data.get("source") == "webhook_filed"
+                ):
+                    logger.info(
+                        f"Reopening cancelled webhook-filed flight {cand.id} "
+                        f"({cand.departure_iata}→{cand.arrival_iata}) for "
+                        f"{aircraft.tail_number}: takeoff {gap_secs / 60:.0f} min from scheduled departure"
+                    )
+                    cand.status = "active"
+                    cand.actual_departure = timestamp
+                    if latitude is not None and not cand.departure_lat:
+                        cand.departure_lat = latitude
+                    if longitude is not None and not cand.departure_lon:
+                        cand.departure_lon = longitude
+                    await record_flight_changes(
+                        cand,
+                        {"status": "active", "actual_departure": str(timestamp)},
+                        "tracker_reopen_webhook",
+                        session,
+                    )
+                    return cand
 
             flight_num = callsign.strip() if callsign else aircraft.tail_number
             logger.info(f"Airborne telemetry detected for {aircraft.tail_number} with no active flight. Auto-creating active flight {flight_num}.")
